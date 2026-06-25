@@ -126,22 +126,13 @@ extends:
             steps:
               - checkout: none
               - ${{ each publishStage in parameters.publishStages }}:
-                - task: EsrpRelease@12
-                  displayName: Publish stage ${{ publishStage.index }}
-                  condition: and(succeeded(), eq(variables['HasStage${{ publishStage.index }}'], 'true'))
-                  inputs:
-                    connectedservicename: 'EsrpThirdPartyPackageManager'
-                    usemanagedidentity: true
-                    keyvaultname: 'DevDiv3rdPartyPkgMngrKV'
-                    signcertname: 'DevDiv3rdPartyPkgMngr'
-                    clientid: '15908223-fc42-4083-bd72-71dedfdac47f'
-                    intent: 'PackageDistribution'
-                    contentType: 'npm'
-                    contentsource: 'Folder'
-                    folderlocation: '$(Pipeline.Workspace)/$(NpmArtifactName)/stage-${{ publishStage.index }}'
-                    waitforreleasecompletion: true
-                    owners: '$(ReleaseOwners)'
-                    approvers: '$(ReleaseApprovers)'
-                    serviceendpointurl: 'https://api.esrp.microsoft.com'
-                    mainpublisher: 'ESRPRELPACMAN'
-                    domaintenantid: '975f013f-7f24-47e8-a7d3-abc4752bf346'
+                - template: MicroBuild.Publish.yml@MicroBuildTemplate
+                  parameters:
+                    condition: and(succeeded(), eq(variables['HasStage${{ publishStage.index }}'], 'true'))
+                    intent: "PackageDistribution"
+                    contentType: "npm"
+                    contentSource: "Folder"
+                    folderLocation: "$(Pipeline.Workspace)/$(NpmArtifactName)/stage-${{ publishStage.index }}"
+                    waitForReleaseCompletion: true
+                    owners: "$(ReleaseOwners)"
+                    approvers: "$(ReleaseApprovers)"
