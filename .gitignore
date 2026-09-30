@@ -66,6 +66,10 @@ typings/
 
 # tdsx
 dist
+!packages/playground-v2/vendor/typescript/dist/
+!packages/playground-v2/vendor/typescript/dist/**
+!packages/playground-v2/vendor/typescript-wasip1-wasm/dist/
+!packages/playground-v2/vendor/typescript-wasip1-wasm/dist/**
 
 .lighthouserc.json
 packages/documentation/output/attribution.json
