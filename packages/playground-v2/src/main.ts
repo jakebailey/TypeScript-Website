@@ -2349,6 +2349,8 @@ function renderDiagnostics(diagnostics: readonly Diagnostic[]) {
       createText("small", `${relativeProjectPath(fileName)}:${start.lineNumber}:${start.column}`, "diagnostic-location")
     )
     button.addEventListener("click", () => {
+      const selection = getSelection()
+      if (selection && !selection.isCollapsed && button.contains(selection.anchorNode)) return
       navigateToModel(fileName, new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column))
     })
     diagnosticsList.appendChild(button)
