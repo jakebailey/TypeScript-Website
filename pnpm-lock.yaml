@@ -20,6 +20,9 @@ overrides:
   webpack: ^5.105.3
 
 patchedDependencies:
+  '@vscode/monaco-lsp-client@0.1.0':
+    hash: 23c5ac40de36e50309d0bd40f33c120de39d2256a563708dfc42ccb1fe4927e9
+    path: patches/@vscode__monaco-lsp-client@0.1.0.patch
   gatsby-remark-shiki-twoslash@3.0.38:
     hash: 5584d3c994349e1a6796ab8e22811fc912fad257e9ad818930836c458ab23640
     path: patches/gatsby-remark-shiki-twoslash@3.0.38.patch
@@ -134,28 +137,6 @@ importers:
         specifier: ^10.9.2
         version: 10.9.2(@types/node@25.3.3)(typescript@6.0.2)
 
-  packages/monaco-lsp-client:
-    dependencies:
-      '@hediet/json-rpc':
-        specifier: ^0.5.0
-        version: 0.5.0
-      '@hediet/json-rpc-browser':
-        specifier: ^0.5.1
-        version: 0.5.1
-      '@hediet/json-rpc-websocket':
-        specifier: ^0.5.1
-        version: 0.5.1(ws@8.19.0)
-      monaco-editor-core:
-        specifier: '*'
-        version: 0.56.0
-    devDependencies:
-      esbuild:
-        specifier: ^0.27.3
-        version: 0.27.3
-      typescript:
-        specifier: 6.0.2
-        version: 6.0.2
-
   packages/playground:
     dependencies:
       '@typescript/playground-worker':
@@ -216,15 +197,15 @@ importers:
       '@typescript/ata':
         specifier: file:vendor/ata
         version: file:packages/playground-v2/vendor/ata
-      '@typescript/monaco-lsp-client':
-        specifier: workspace:*
-        version: link:../monaco-lsp-client
       '@typescript/typescript':
         specifier: file:vendor/typescript
         version: file:packages/playground-v2/vendor/typescript
       '@typescript/typescript-wasip1-wasm':
         specifier: file:vendor/typescript-wasip1-wasm
         version: file:packages/playground-v2/vendor/typescript-wasip1-wasm
+      '@vscode/monaco-lsp-client':
+        specifier: github:microsoft/monaco-editor#13f0c872dcf352815cc28d92dfff496c9839ea5c&path:/monaco-lsp-client
+        version: https://codeload.github.com/microsoft/monaco-editor/tar.gz/13f0c872dcf352815cc28d92dfff496c9839ea5c#path:/monaco-lsp-client(patch_hash=23c5ac40de36e50309d0bd40f33c120de39d2256a563708dfc42ccb1fe4927e9)(monaco-editor-core@0.56.0)(ws@8.19.0)
       coi-serviceworker:
         specifier: ^0.1.7
         version: 0.1.7
@@ -3129,6 +3110,12 @@ packages:
 
   '@vscode/l10n@0.0.18':
     resolution: {integrity: sha512-KYSIHVmslkaCDyw013pphY+d7x1qV8IZupYfeIfzNA+nsaWHbn5uPuQRvdRFsa9zFzGeudPuoGoZ1Op4jrJXIQ==}
+
+  '@vscode/monaco-lsp-client@https://codeload.github.com/microsoft/monaco-editor/tar.gz/13f0c872dcf352815cc28d92dfff496c9839ea5c#path:/monaco-lsp-client':
+    resolution: {path: /monaco-lsp-client, tarball: https://codeload.github.com/microsoft/monaco-editor/tar.gz/13f0c872dcf352815cc28d92dfff496c9839ea5c}
+    version: 0.1.0
+    peerDependencies:
+      monaco-editor-core: '*'
 
   '@webassemblyjs/ast@1.14.1':
     resolution: {integrity: sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ==}
@@ -13192,6 +13179,15 @@ snapshots:
       resolve: 1.22.11
 
   '@vscode/l10n@0.0.18': {}
+
+  '@vscode/monaco-lsp-client@https://codeload.github.com/microsoft/monaco-editor/tar.gz/13f0c872dcf352815cc28d92dfff496c9839ea5c#path:/monaco-lsp-client(patch_hash=23c5ac40de36e50309d0bd40f33c120de39d2256a563708dfc42ccb1fe4927e9)(monaco-editor-core@0.56.0)(ws@8.19.0)':
+    dependencies:
+      '@hediet/json-rpc': 0.5.0
+      '@hediet/json-rpc-browser': 0.5.1
+      '@hediet/json-rpc-websocket': 0.5.1(ws@8.19.0)
+      monaco-editor-core: 0.56.0
+    transitivePeerDependencies:
+      - ws
 
   '@webassemblyjs/ast@1.14.1':
     dependencies:

@@ -1,0 +1,181 @@
+diff --git a/package.json b/package.json
+index 297e117..c4d5832 100644
+--- a/package.json
++++ b/package.json
+@@ -19,9 +19,5 @@
+ 		"rolldown-plugin-dts": "^0.16.11",
+ 		"rollup-plugin-delete": "^3.0.1"
+ 	},
+-	"scripts": {
+-		"build": "npx rolldown -c rolldown.config.mjs",
+-		"dev": "npx rolldown -c rolldown.config.mjs --watch",
+-		"generate": "tsx generator/index.ts"
+-	}
++	"scripts": {}
+ }
+diff --git a/src/adapters/TextDocumentSynchronizer.ts b/src/adapters/TextDocumentSynchronizer.ts
+index c2b3620..09c3f6d 100644
+--- a/src/adapters/TextDocumentSynchronizer.ts
++++ b/src/adapters/TextDocumentSynchronizer.ts
+@@ -54,6 +54,13 @@ export class TextDocumentSynchronizer extends Disposable implements ITextModelBr
+         }
+ 
+         const uriStr = m.uri.toString(true).toLowerCase();
++        if (m.uri.scheme === 'file' && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(m.uri.path)) {
++            this._managedModelsReverse.set(uriStr, m);
++            m.onWillDispose(() => {
++                this._managedModelsReverse.delete(uriStr);
++            });
++            return;
++        }
+         let mm = this._managedModels.get(m);
+         if (!mm) {
+             mm = new ManagedModel(m, this._server);
+diff --git a/src/adapters/languageFeatures/LspCompletionFeature.ts b/src/adapters/languageFeatures/LspCompletionFeature.ts
+index e5a9f7f..869bb6c 100644
+--- a/src/adapters/languageFeatures/LspCompletionFeature.ts
++++ b/src/adapters/languageFeatures/LspCompletionFeature.ts
+@@ -142,7 +142,13 @@ function convertLspToMonacoCompletionItem(
+     }
+ 
+     if (!range) {
+-        range = monaco.Range.fromPositions(position, position);
++        const word = model.getWordUntilPosition(position);
++        range = new monaco.Range(
++            position.lineNumber,
++            word.startColumn,
++            position.lineNumber,
++            position.column,
++        );
+     }
+ 
+     const item: monaco.languages.CompletionItem = {
+diff --git a/src/adapters/languageFeatures/LspDefinitionFeature.ts b/src/adapters/languageFeatures/LspDefinitionFeature.ts
+index bf87f89..3d2257b 100644
+--- a/src/adapters/languageFeatures/LspDefinitionFeature.ts
++++ b/src/adapters/languageFeatures/LspDefinitionFeature.ts
+@@ -51,10 +51,25 @@ class LspDefinitionProvider implements monaco.languages.DefinitionProvider {
+             return null;
+         }
+ 
+-        if (Array.isArray(result)) {
+-            return result.map(loc => toMonacoLocation(loc, this._client));
++        const definitions = Array.isArray(result)
++            ? result.map(loc => toMonacoLocation(loc, this._client))
++            : [toMonacoLocation(result, this._client)];
++        const external = definitions.find(definition => definition.uri.toString() !== model.uri.toString());
++        if (external) {
++            const targetModel = monaco.editor.getModel(external.uri);
++            const editor = monaco.editor.getEditors().find(editor => editor.getModel() === model);
++            if (targetModel && editor) {
++                const range = 'targetSelectionRange' in external
++                    ? external.targetSelectionRange ?? external.range
++                    : external.range;
++                editor.setModel(targetModel);
++                editor.setSelection(range);
++                editor.revealRangeInCenter(range, monaco.editor.ScrollType.Immediate);
++                editor.focus();
++                return null;
++            }
+         }
+ 
+-        return toMonacoLocation(result, this._client);
++        return Array.isArray(result) ? definitions : definitions[0];
+     }
+ }
+diff --git a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
+index 40e8cad..331e0eb 100644
+--- a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
++++ b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
+@@ -57,6 +57,10 @@ export class LspDiagnosticsFeature extends Disposable {
+ 		capability: DiagnosticRegistrationOptions,
+ 		disposables: DisposableStore
+ 	): void {
++		if (model.uri.scheme === 'file' && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(model.uri.path)) {
++			return;
++		}
++
+ 		// Check if model matches the document selector
+ 		const languageId = model.getLanguageId();
+ 
+diff --git a/src/adapters/languageFeatures/LspHoverFeature.ts b/src/adapters/languageFeatures/LspHoverFeature.ts
+index b77c4fd..04a5aa3 100644
+--- a/src/adapters/languageFeatures/LspHoverFeature.ts
++++ b/src/adapters/languageFeatures/LspHoverFeature.ts
+@@ -1,5 +1,5 @@
+ import * as monaco from 'monaco-editor-core';
+-import { capabilities, HoverRegistrationOptions, MarkupContent, MarkedString, MarkupKind } from '../../../src/types';
++import { capabilities, Hover, HoverParams, HoverRegistrationOptions, MarkupContent, MarkedString, MarkupKind } from '../../../src/types';
+ import { Disposable } from '../../utils';
+ import { LspConnection } from '../LspConnection';
+ import { toMonacoLanguageSelector } from './common';
+@@ -16,7 +16,10 @@ export class LspHoverFeature extends Disposable {
+                     dynamicRegistration: true,
+                     contentFormat: [MarkupKind.Markdown, MarkupKind.PlainText],
+                 }
+-            }
++            },
++            experimental: {
++                hoverVerbosityLevel: true,
++            },
+         }));
+ 
+         this._register(this._connection.capabilities.registerCapabilityHandler(capabilities.textDocumentHover, true, capability => {
+@@ -28,7 +31,19 @@ export class LspHoverFeature extends Disposable {
+     }
+ }
+ 
+-class LspHoverProvider implements monaco.languages.HoverProvider {
++interface LspVerboseHover extends monaco.languages.Hover {
++    verbosityLevel: number;
++}
++
++interface VerboseHoverParams extends HoverParams {
++    verbosityLevel: number;
++}
++
++interface VerboseHover extends Hover {
++    canIncreaseVerbosity?: boolean;
++}
++
++class LspHoverProvider implements monaco.languages.HoverProvider<LspVerboseHover> {
+     constructor(
+         private readonly _client: LspConnection,
+         private readonly _capabilities: HoverRegistrationOptions,
+@@ -37,14 +52,22 @@ class LspHoverProvider implements monaco.languages.HoverProvider {
+     async provideHover(
+         model: monaco.editor.ITextModel,
+         position: monaco.Position,
+-        token: monaco.CancellationToken
+-    ): Promise<monaco.languages.Hover | null> {
++        token: monaco.CancellationToken,
++        context?: monaco.languages.HoverContext<LspVerboseHover>,
++    ): Promise<LspVerboseHover | null> {
+         const translated = this._client.bridge.translate(model, position);
++        const verbosityLevel = Math.max(
++            0,
++            (context?.verbosityRequest?.previousHover.verbosityLevel ?? 0)
++                + (context?.verbosityRequest?.verbosityDelta ?? 0),
++        );
+ 
+-        const result = await this._client.server.textDocumentHover({
++        const params: VerboseHoverParams = {
+             textDocument: translated.textDocument,
+             position: translated.position,
+-        });
++            verbosityLevel,
++        };
++        const result = await this._client.server.textDocumentHover(params) as VerboseHover | null;
+ 
+         if (!result || !result.contents) {
+             return null;
+@@ -53,6 +76,9 @@ class LspHoverProvider implements monaco.languages.HoverProvider {
+         return {
+             contents: toMonacoMarkdownString(result.contents),
+             range: result.range ? this._client.bridge.translateBackRange(translated.textDocument, result.range).range : undefined,
++            canIncreaseVerbosity: result.canIncreaseVerbosity,
++            canDecreaseVerbosity: verbosityLevel > 0,
++            verbosityLevel,
+         };
+     }
+ }
