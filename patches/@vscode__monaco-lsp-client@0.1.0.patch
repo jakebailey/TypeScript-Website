@@ -1,8 +1,8 @@
 diff --git a/package.json b/package.json
-index 297e117..c4d5832 100644
+index 297e117..30a2649 100644
 --- a/package.json
 +++ b/package.json
-@@ -19,9 +19,5 @@
+@@ -18,9 +18,5 @@
  		"rolldown-plugin-dts": "^0.16.11",
  		"rollup-plugin-delete": "^3.0.1"
  	},
@@ -13,15 +13,77 @@ index 297e117..c4d5832 100644
 -	}
 +	"scripts": {}
  }
+diff --git a/src/adapters/LspClient.ts b/src/adapters/LspClient.ts
+index 1c5d732..f044638 100644
+--- a/src/adapters/LspClient.ts
++++ b/src/adapters/LspClient.ts
+@@ -1,4 +1,5 @@
+ import { IMessageTransport, TypedChannel } from "@hediet/json-rpc";
++import * as monaco from 'monaco-editor-core';
+ import { LspCompletionFeature } from "./languageFeatures/LspCompletionFeature";
+ import { LspHoverFeature } from "./languageFeatures/LspHoverFeature";
+ import { LspSignatureHelpFeature } from "./languageFeatures/LspSignatureHelpFeature";
+@@ -27,6 +28,11 @@ import { LspCapabilitiesRegistry } from './LspCapabilitiesRegistry';
+ import { TextDocumentSynchronizer } from "./TextDocumentSynchronizer";
+ import { DisposableStore, IDisposable } from "../utils";
+ 
++export interface MonacoLspClientOptions {
++    shouldSynchronizeModel?: (model: monaco.editor.ITextModel) => boolean;
++    shouldHandleDiagnostics?: (model: monaco.editor.ITextModel) => boolean;
++}
++
+ export class MonacoLspClient {
+     private _connection: LspConnection;
+     private readonly _capabilitiesRegistry: LspCapabilitiesRegistry;
+@@ -34,13 +40,20 @@ export class MonacoLspClient {
+ 
+     private _initPromise: Promise<void>;
+ 
+-    constructor(transport: IMessageTransport) {
++    constructor(
++        transport: IMessageTransport,
++        private readonly _options: MonacoLspClientOptions = {},
++    ) {
+         const c = TypedChannel.fromTransport(transport);
+         const s = api.getServer(c, {});
+         c.startListen();
+ 
+         this._capabilitiesRegistry = new LspCapabilitiesRegistry(c);
+-        this._bridge = new TextDocumentSynchronizer(s.server, this._capabilitiesRegistry);
++        this._bridge = new TextDocumentSynchronizer(
++            s.server,
++            this._capabilitiesRegistry,
++            this._options.shouldSynchronizeModel,
++        );
+ 
+         this._connection = new LspConnection(s.server, this._bridge, this._capabilitiesRegistry, c);
+         this.createFeatures();
+@@ -83,7 +96,7 @@ export class MonacoLspClient {
+         store.add(new LspSelectionRangeFeature(this._connection));
+         store.add(new LspInlayHintsFeature(this._connection));
+         store.add(new LspSemanticTokensFeature(this._connection));
+-        store.add(new LspDiagnosticsFeature(this._connection));
++        store.add(new LspDiagnosticsFeature(this._connection, this._options.shouldHandleDiagnostics));
+ 
+         return store;
+     }
 diff --git a/src/adapters/TextDocumentSynchronizer.ts b/src/adapters/TextDocumentSynchronizer.ts
-index c2b3620..09c3f6d 100644
+index c2b3620..72a1508 100644
 --- a/src/adapters/TextDocumentSynchronizer.ts
 +++ b/src/adapters/TextDocumentSynchronizer.ts
-@@ -54,6 +54,13 @@ export class TextDocumentSynchronizer extends Disposable implements ITextModelBr
+@@ -13,6 +13,7 @@ export class TextDocumentSynchronizer extends Disposable implements ITextModelBr
+     constructor(
+         private readonly _server: typeof api.TServerInterface,
+         private readonly _capabilities: ILspCapabilitiesRegistry,
++        private readonly _shouldSynchronizeModel: (model: monaco.editor.ITextModel) => boolean = () => true,
+     ) {
+         super();
+ 
+@@ -54,6 +55,13 @@ export class TextDocumentSynchronizer extends Disposable implements ITextModelBr
          }
  
          const uriStr = m.uri.toString(true).toLowerCase();
-+        if (m.uri.scheme === 'file' && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(m.uri.path)) {
++        if (!this._shouldSynchronizeModel(m)) {
 +            this._managedModelsReverse.set(uriStr, m);
 +            m.onWillDispose(() => {
 +                this._managedModelsReverse.delete(uriStr);
@@ -84,20 +146,66 @@ index bf87f89..3d2257b 100644
      }
  }
 diff --git a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
-index 40e8cad..331e0eb 100644
+index 40e8cad..dc020e3 100644
 --- a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
 +++ b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
-@@ -57,6 +57,10 @@ export class LspDiagnosticsFeature extends Disposable {
+@@ -10,6 +10,7 @@ export class LspDiagnosticsFeature extends Disposable {
+ 
+ 	constructor(
+ 		private readonly _connection: LspConnection,
++		private readonly _shouldHandleDiagnostics: (model: monaco.editor.ITextModel) => boolean = () => true,
+ 	) {
+ 		super();
+ 
+@@ -57,6 +58,10 @@ export class LspDiagnosticsFeature extends Disposable {
  		capability: DiagnosticRegistrationOptions,
  		disposables: DisposableStore
  	): void {
-+		if (model.uri.scheme === 'file' && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(model.uri.path)) {
++		if (!this._shouldHandleDiagnostics(model)) {
 +			return;
 +		}
 +
  		// Check if model matches the document selector
  		const languageId = model.getLanguageId();
  
+@@ -68,7 +73,8 @@ export class LspDiagnosticsFeature extends Disposable {
+ 			model,
+ 			this._connection,
+ 			this._diagnosticsMarkerOwner,
+-			capability
++			capability,
++			this._shouldHandleDiagnostics,
+ 		);
+ 
+ 		this._pullDiagnosticProviders.set(model, provider);
+@@ -89,6 +95,9 @@ export class LspDiagnosticsFeature extends Disposable {
+ 			if (!model || model.isDisposed()) {
+ 				return;
+ 			}
++			if (!this._shouldHandleDiagnostics(model)) {
++				return;
++			}
+ 
+ 			const markers = params.diagnostics.map(diagnostic =>
+ 				toDiagnosticMarker(diagnostic)
+@@ -114,6 +123,7 @@ class ModelDiagnosticProvider extends Disposable {
+ 		private readonly _connection: LspConnection,
+ 		private readonly _markerOwner: string,
+ 		private readonly _capability: DiagnosticRegistrationOptions,
++		private readonly _shouldHandleDiagnostics: (model: monaco.editor.ITextModel) => boolean,
+ 	) {
+ 		super();
+ 		this._register(this._model.onDidChangeContent(() => {
+@@ -185,6 +195,9 @@ class ModelDiagnosticProvider extends Disposable {
+ 				if (!model || model.isDisposed()) {
+ 					continue;
+ 				}
++				if (!this._shouldHandleDiagnostics(model)) {
++					continue;
++				}
+ 
+ 				if (report.kind === 'full') {
+ 					const markers = report.items.map((diagnostic: Diagnostic) => toDiagnosticMarker(diagnostic));
 diff --git a/src/adapters/languageFeatures/LspHoverFeature.ts b/src/adapters/languageFeatures/LspHoverFeature.ts
 index b77c4fd..04a5aa3 100644
 --- a/src/adapters/languageFeatures/LspHoverFeature.ts

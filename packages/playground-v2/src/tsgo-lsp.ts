@@ -305,7 +305,10 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
   })
 
   const transport = createTransportToWorker(worker as unknown as Worker)
-  new MonacoLspClient(transport)
+  new MonacoLspClient(transport, {
+    shouldHandleDiagnostics: model => !isServerOwnedLibraryModel(model),
+    shouldSynchronizeModel: model => !isServerOwnedLibraryModel(model),
+  })
   return {
     updateEffectiveConfig(text: string) {
       worker.updateEffectiveConfig(text)
@@ -334,6 +337,10 @@ function normalizeLibraryUri(uri: string) {
     return uri
   }
   return monaco.Uri.file(`/typescript/lib/${parsed.path.slice("/libs/".length)}`).toString()
+}
+
+function isServerOwnedLibraryModel(model: monaco.editor.ITextModel) {
+  return model.uri.scheme === "file" && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(model.uri.path)
 }
 
 async function ensureDefinitionModels(result: unknown) {
