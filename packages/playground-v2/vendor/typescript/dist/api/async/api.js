@@ -15,20 +15,21 @@ import { ScriptKind } from "#enums/scriptKind";
 import { SignatureFlags } from "#enums/signatureFlags";
 import { SignatureKind } from "#enums/signatureKind";
 import { SymbolFlags } from "#enums/symbolFlags";
+import { SymbolOwnerKind } from "#enums/symbolOwnerKind";
 import { TypeFlags } from "#enums/typeFlags";
 import { TypeFormatFlags } from "#enums/typeFormatFlags";
 import { TypePredicateKind } from "#enums/typePredicateKind";
 import { ModifierFlags, unescapeLeadingUnderscores, } from "../../ast/index.js";
 import { assertNever } from "../../internal/utils.js";
 import { encodeNode, uint8ArrayToBase64, } from "../node/encoder.js";
-import { decodeNode, getNodeId, parseNodeHandle, readParseOptionsKey, readSourceFileHash, RemoteSourceFile, } from "../node/node.js";
+import { decodeNode, getNodeId, parseNodeHandle, readSourceFileLease, RemoteSourceFile, } from "../node/node.js";
 import { Wtf8Decoder } from "../node/wtf8.js";
 import { createGetCanonicalFileName, toPath, } from "../path.js";
-import { resolveFileName, toCreateSnapshotRequest, } from "../proto.js";
-import { SourceFileCache } from "../sourceFileCache.js";
+import { resolveFileName, toCreateSnapshotRequest, validateSymbolResponse, } from "../proto.js";
+import { SourceFileCache, } from "../sourceFileCache.js";
 export { formatDiagnostics, formatDiagnosticsWithColorAndContext } from "../diagnosticFormatter.js";
 export { documentURIToFileName, fileNameToDocumentURI } from "../path.js";
-export { CheckFlags, CompletionItemKind, DiagnosticCategory, ElementFlags, EmitOnly, IndexKind, JsxEmit, ModifierFlags, ModuleKind, ModuleResolutionKind, NodeBuilderFlags, ObjectFlags, ScriptKind, SignatureFlags, SignatureKind, SymbolFlags, TypeFlags, TypeFormatFlags, TypePredicateKind };
+export { CheckFlags, CompletionItemKind, DiagnosticCategory, ElementFlags, EmitOnly, IndexKind, JsxEmit, ModifierFlags, ModuleKind, ModuleResolutionKind, NodeBuilderFlags, ObjectFlags, ScriptKind, SignatureFlags, SignatureKind, SymbolFlags, SymbolOwnerKind, TypeFlags, TypeFormatFlags, TypePredicateKind };
 let nextModuleResolutionCallbackId = 0;
 function registerModuleResolutionCallback(client, callback, getSnapshot) {
     const name = `resolveModuleName/${++nextModuleResolutionCallbackId}`;
@@ -60,6 +61,8 @@ export class API {
     initialized = false;
     initializing;
     activeSnapshots = new Map();
+    activeBuildOrchestrators = new Set();
+    activeSourceFileLeases = new Map();
     printer;
     internal;
     constructor(options = {}) {
@@ -122,6 +125,19 @@ export class API {
     getNewLine() {
         return "\n";
     }
+    async createBuildOrchestrator(rootNames, buildOrchestratorOptions) {
+        await this.ensureInitialized();
+        const orchestratorResponse = await this.client.apiRequest("createBuildOrchestrator", {
+            ...buildOrchestratorOptions,
+            ...buildOrchestratorOptions.overrideCompilerOptions,
+            rootNames,
+        });
+        const orchestrator = new BuildOrchestrator(this.client, orchestratorResponse, () => {
+            this.activeBuildOrchestrators.delete(orchestrator);
+        });
+        this.activeBuildOrchestrators.add(orchestrator);
+        return orchestrator;
+    }
     async parseConfigFile(file) {
         await this.ensureInitialized();
         return this.client.apiRequest("parseConfigFile", { file });
@@ -138,21 +154,73 @@ export class API {
         await this.ensureInitialized();
         return this.client.apiRequest("parseJsonConfigFileContent", { json, ...options });
     }
+    /**
+     * Create and retain a source file independently of a program.
+     * Dispose the returned lease when the source file no longer needs to remain available remotely.
+     */
     async createSourceFile(fileName, sourceText, options = {}) {
         await this.ensureInitialized();
         const data = await this.client.apiRequestBinary("createSourceFile", { fileName, sourceText, options });
         if (!data) {
             throw new Error("createSourceFile returned no source file");
         }
-        return new RemoteSourceFile(data, this.decoder, this.client.getTimingCollector());
+        return this.retainSourceFileResponse(data);
     }
+    /**
+     * Read, create, and retain a source file independently of a program.
+     * Dispose the returned lease when the source file no longer needs to remain available remotely.
+     */
     async createSourceFileFromFile(file, options = {}) {
         await this.ensureInitialized();
         const data = await this.client.apiRequestBinary("createSourceFileFromFile", { fileName: resolveFileName(file), options });
         if (!data) {
             throw new Error("createSourceFileFromFile returned no source file");
         }
-        return new RemoteSourceFile(data, this.decoder, this.client.getTimingCollector());
+        return this.retainSourceFileResponse(data);
+    }
+    /**
+     * Retain an ordinary remote source file independently of the snapshot or lease that produced it.
+     */
+    async retainSourceFile(sourceFile) {
+        await this.ensureInitialized();
+        if (!(sourceFile instanceof RemoteSourceFile)) {
+            throw new TypeError("Only remote source files can be retained");
+        }
+        const cached = this.sourceFileCache.get(sourceFile);
+        if (cached && cached !== sourceFile) {
+            throw new Error("Source file is no longer the canonical cached instance");
+        }
+        const result = await this.client.apiRequest("retainSourceFile", { file: sourceFileDescriptor(sourceFile) });
+        return this.addSourceFileLease(sourceFile, result.lease);
+    }
+    retainSourceFileResponse(data) {
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const lease = readSourceFileLease(view);
+        try {
+            const decoded = new RemoteSourceFile(data, this.decoder, this.client.getTimingCollector());
+            return this.addSourceFileLease(decoded, lease);
+        }
+        catch (error) {
+            // @sync-skip-block-start
+            void this.client.apiRequest("releaseSourceFile", { lease }).catch(() => { });
+            // @sync-skip-block-end
+            // @sync-only-start
+            // try {
+            //     this.client.apiRequest("releaseSourceFile", { lease });
+            // }
+            // catch {}
+            // @sync-only-end
+            throw error;
+        }
+    }
+    addSourceFileLease(sourceFile, lease) {
+        const cached = this.sourceFileCache.setForLease(sourceFile, lease);
+        const retained = new RetainedSourceFile(cached, lease, this.client, () => {
+            this.activeSourceFileLeases.delete(lease);
+            this.sourceFileCache.releaseLease(lease);
+        });
+        this.activeSourceFileLeases.set(lease, retained);
+        return retained;
     }
     async transpileModule(input, options = {}) {
         await this.ensureInitialized();
@@ -270,15 +338,24 @@ export class API {
         }
         // @sync-skip-block-end
         await this.initializing?.catch(() => { }); // @sync-skip
-        // Dispose all active snapshots
         try {
-            for (const snapshot of [...this.activeSnapshots.values()]) {
-                await snapshot.dispose();
+            for (const retained of [...this.activeSourceFileLeases.values()]) {
+                await retained.dispose();
             }
-            this.sourceFileCache.clear();
         }
         finally {
-            await this.client.close(); // always close the underlying connection
+            try {
+                for (const orchestrator of [...this.activeBuildOrchestrators]) {
+                    await orchestrator.dispose();
+                }
+                for (const snapshot of [...this.activeSnapshots.values()]) {
+                    await snapshot.dispose();
+                }
+                this.sourceFileCache.clear();
+            }
+            finally {
+                await this.client.close(); // always close the underlying connection
+            }
         }
     }
     async createModuleResolver(compilerOptions, options) {
@@ -354,6 +431,48 @@ export class API {
         return program;
     }
 }
+function sourceFileDescriptor(sourceFile) {
+    return {
+        fileName: sourceFile.fileName,
+        path: sourceFile.path,
+        contentHash: sourceFile.contentHash,
+        parseOptionsKey: sourceFile.parseOptionsKey,
+        scriptKind: sourceFile.scriptKind,
+        nodeId: sourceFile.nodeId,
+    };
+}
+/** An independently retained source file and its disposable remote-lifetime lease. */
+export class RetainedSourceFile {
+    sourceFile;
+    lease;
+    client;
+    onDispose;
+    disposed = false;
+    disposePromise;
+    constructor(sourceFile, lease, client, onDispose) {
+        this.sourceFile = sourceFile;
+        this.lease = lease;
+        this.client = client;
+        this.onDispose = onDispose;
+    }
+    [globalThis.Symbol.asyncDispose]() {
+        return this.dispose(); // @sync: this.dispose();
+    }
+    dispose() {
+        return this.disposePromise ??= this.disposeWorker();
+    }
+    async disposeWorker() {
+        if (this.disposed)
+            return;
+        this.disposed = true;
+        try {
+            await this.client.apiRequest("releaseSourceFile", { lease: this.lease });
+        }
+        finally {
+            this.onDispose();
+        }
+    }
+}
 export class InternalAPI {
     client;
     ensureInitialized;
@@ -405,7 +524,7 @@ export class Snapshot {
             projectDataMap.set(projectData.id, projectData);
         }
         this.projectDataMap = new Map([...projectDataMap].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
-        this.snapshotRegistry = new SnapshotObjectRegistry(client, this.id, projectId => this.projectMap.get(projectId));
+        this.snapshotRegistry = new SnapshotObjectRegistry(this.id);
         for (const projData of this.projectDataMap.values()) {
             const project = new Project(projData, this.id, client, sourceFileCache, toPath, formatDiagnosticsHost, this.snapshotRegistry);
             this.projectMap.set(projData.id, project);
@@ -531,23 +650,28 @@ export class ModuleResolver {
 }
 class SnapshotObjectRegistry {
     symbols = new Map();
-    client;
+    projectRegistries = new Map();
     snapshotId;
-    resolveProject;
-    constructor(client, snapshotId, resolveProject) {
-        this.client = client;
+    constructor(snapshotId) {
         this.snapshotId = snapshotId;
-        this.resolveProject = resolveProject;
     }
-    /** Resolve a project ID to its Project within this snapshot. */
-    getProject(projectId) {
-        return this.resolveProject(projectId);
+    addProjectRegistry(registry) {
+        this.projectRegistries.set(registry.project.id, registry);
     }
     getOrCreateSymbol(data) {
-        let symbol = this.symbols.get(data.id);
+        const reference = data.reference;
+        if (reference.kind !== SymbolOwnerKind.Snapshot)
+            throw new Error(`Symbol ${reference.id} is not snapshot-owned`);
+        let symbol = this.symbols.get(reference.id);
         if (!symbol) {
-            symbol = new Symbol(data, this);
-            this.symbols.set(data.id, symbol);
+            if (reference.snapshot !== this.snapshotId) {
+                throw new Error(`Symbol ${reference.id} belongs to snapshot ${reference.snapshot}, not ${this.snapshotId}`);
+            }
+            const registry = this.projectRegistries.get(reference.project);
+            if (!registry)
+                throw new Error(`Symbol ${reference.id} references unknown project '${reference.project}'`);
+            symbol = new Symbol(data, { kind: SymbolOwnerKind.Snapshot, registry });
+            this.symbols.set(reference.id, symbol);
         }
         return symbol;
     }
@@ -557,65 +681,49 @@ class SnapshotObjectRegistry {
     clear() {
         this.symbols.clear();
     }
-    async fetchSymbol(source, method, handle, projectId) {
-        if (!handle)
-            return undefined;
-        const cached = this.getSymbol(handle);
-        if (cached)
-            return cached;
-        const data = await this.client.apiRequest(method, {
-            snapshot: this.snapshotId,
-            project: projectId,
-            objectId: source.id,
-        });
-        if (!data)
-            throw new Error(`${method} returned null symbol for ${source.constructor.name} ${source.id}`);
-        return this.getOrCreateSymbol(data);
-    }
-    async fetchSymbols(source, method, handles, projectId) {
-        if (handles) {
-            const result = new Array(handles.length);
-            let allCached = true;
-            for (let i = 0; i < handles.length; i++) {
-                const cached = this.getSymbol(handles[i]);
-                if (!cached) {
-                    allCached = false;
-                    break;
-                }
-                result[i] = cached;
-            }
-            if (allCached)
-                return result;
-        }
-        const symbolData = await this.client.apiRequest(method, {
-            snapshot: this.snapshotId,
-            project: projectId,
-            objectId: source.id,
-        });
-        if (symbolData == null)
-            return [];
-        else
-            return symbolData.map(data => this.getOrCreateSymbol(data));
-    }
 }
 class ProjectObjectRegistry {
     client;
     snapshotId;
     project;
     snapshotRegistry;
+    sourceFileCache;
     types = new Map();
     signatures = new Map();
-    constructor(client, snapshotId, project, snapshotRegistry) {
+    disposed = false;
+    constructor(client, snapshotId, project, snapshotRegistry, sourceFileCache) {
         this.client = client;
         this.snapshotId = snapshotId;
         this.project = project;
         this.snapshotRegistry = snapshotRegistry;
+        this.sourceFileCache = sourceFileCache;
+        snapshotRegistry.addProjectRegistry(this);
     }
     getOrCreateSymbol(data) {
-        return this.snapshotRegistry.getOrCreateSymbol(data);
+        this.ensureNotDisposed();
+        validateSymbolResponse(data);
+        const reference = data.reference;
+        if (reference.kind === SymbolOwnerKind.Snapshot) {
+            return this.snapshotRegistry.getOrCreateSymbol(data);
+        }
+        const record = this.sourceFileCache.getOrCreateRecord(reference.file, this.snapshotId, this.project.id);
+        return this.sourceFileCache.getOrCreateSymbol(record, reference.file, reference.id, () => new Symbol(data, {
+            kind: SymbolOwnerKind.File,
+            owner: { record, cache: this.sourceFileCache, client: this.client },
+        }));
     }
-    getSymbol(id) {
-        return this.snapshotRegistry.getSymbol(id);
+    /** Find an already-interned symbol and retain its file record for this registry. */
+    getCachedSymbol(reference) {
+        this.ensureNotDisposed();
+        if (reference.file === undefined) {
+            return this.snapshotRegistry.getSymbol(reference.id);
+        }
+        const record = this.sourceFileCache.findRecord(reference.file);
+        const symbol = record?.symbols.get(reference.id);
+        if (record && symbol) {
+            this.sourceFileCache.retainRecord(record, this.snapshotId, this.project.id);
+        }
+        return symbol;
     }
     getOrCreateType(data) {
         let type = this.types.get(data.id);
@@ -643,8 +751,13 @@ class ProjectObjectRegistry {
         return this.signatures.get(id);
     }
     clear() {
+        this.disposed = true;
         this.types.clear();
         this.signatures.clear();
+    }
+    ensureNotDisposed() {
+        if (this.disposed)
+            throw new Error("Project object registry is disposed");
     }
     async fetchOptionalType(source, method, handle) {
         if (handle !== false) {
@@ -669,8 +782,22 @@ class ProjectObjectRegistry {
             throw new Error(`${method} returned no type for ${source.constructor.name} ${source.id}`);
         return result;
     }
-    async fetchSymbol(source, method, handle) {
-        return this.snapshotRegistry.fetchSymbol(source, method, handle, this.project.id);
+    async fetchSymbol(source, method, reference) {
+        if (!reference)
+            return undefined;
+        const cached = this.getCachedSymbol(reference);
+        if (cached)
+            return cached;
+        const data = source instanceof Symbol
+            ? await this.client.apiRequest(method, { symbol: source.reference })
+            : await this.client.apiRequest(method, {
+                snapshot: this.snapshotId,
+                project: this.project.id,
+                objectId: source.id,
+            });
+        if (!data)
+            throw new Error(`${method} returned null symbol for ${source.constructor.name} ${source.id}`);
+        return this.getOrCreateSymbol(data);
     }
     async fetchSignature(source, method, handle) {
         if (!handle)
@@ -712,8 +839,29 @@ class ProjectObjectRegistry {
         else
             return typesData.map(data => this.getOrCreateType(data));
     }
-    async fetchSymbols(source, method, handles) {
-        return this.snapshotRegistry.fetchSymbols(source, method, handles, this.project.id);
+    async fetchSymbols(source, method, references) {
+        if (references) {
+            const result = new Array(references.length);
+            for (let i = 0; i < references.length; i++) {
+                const cached = this.getCachedSymbol(references[i]);
+                if (!cached) {
+                    return this.fetchSymbolsFromServer(source, method);
+                }
+                result[i] = cached;
+            }
+            return result;
+        }
+        return this.fetchSymbolsFromServer(source, method);
+    }
+    async fetchSymbolsFromServer(source, method) {
+        const data = source instanceof Symbol
+            ? await this.client.apiRequest(method, { symbol: source.reference })
+            : await this.client.apiRequest(method, {
+                snapshot: this.snapshotId,
+                project: this.project.id,
+                objectId: source.id,
+            });
+        return data?.map(symbol => this.getOrCreateSymbol(symbol)) ?? [];
     }
     // getBaseTypes is a checker-level endpoint keyed by `type` (not `objectId`),
     // so it cannot go through fetchTypes. This helper reuses that server method.
@@ -815,7 +963,7 @@ export class Project {
         this.client = client;
         this.snapshotId = snapshotId;
         this.program = new Program(snapshotId, this, client, sourceFileCache, toPath, formatDiagnosticsHost);
-        const objectRegistry = new ProjectObjectRegistry(client, snapshotId, this, snapshotRegistry);
+        const objectRegistry = new ProjectObjectRegistry(client, snapshotId, this, snapshotRegistry, sourceFileCache);
         this.checker = new Checker(snapshotId, this, client, objectRegistry);
         this.languageService = new LanguageService(snapshotId, this, client, objectRegistry);
     }
@@ -848,7 +996,7 @@ export class LanguageService {
                 case "importSymbol":
                     const importSymbolAction = {
                         kind: "importSymbol",
-                        symbol: action.symbol.id,
+                        symbol: action.symbol.reference,
                     };
                     if (action.isValidTypeOnlyUseSite !== undefined) {
                         importSymbolAction.isValidTypeOnlyUseSite = action.isValidTypeOnlyUseSite;
@@ -992,12 +1140,9 @@ export class Program {
         if (!binaryData) {
             return undefined;
         }
-        const view = new DataView(binaryData.buffer, binaryData.byteOffset, binaryData.byteLength);
-        const contentHash = readSourceFileHash(view);
-        const parseOptionsKey = readParseOptionsKey(view);
         // Create a new RemoteSourceFile and cache it (set returns existing if hash matches)
-        const sourceFile = new RemoteSourceFile(binaryData, this.decoder, this.client.getTimingCollector());
-        return this.sourceFileCache.set(path, sourceFile, parseOptionsKey, contentHash, this.snapshotId, this.project.id);
+        const decoded = new RemoteSourceFile(binaryData, this.decoder, this.client.getTimingCollector());
+        return this.sourceFileCache.set(decoded, this.snapshotId, this.project.id);
     }
     async getResolvedModule(file, moduleName, mode) {
         const result = await this.client.apiRequest("getResolvedModule", {
@@ -1301,6 +1446,77 @@ export class Program {
         return this.project;
     }
 }
+export class BuildOrchestrator {
+    client;
+    id;
+    disposed = false;
+    disposePromise;
+    onDispose;
+    constructor(client, orchestratorResponse, onDispose) {
+        this.client = client;
+        this.id = orchestratorResponse.buildOrchestratorID;
+        this.onDispose = onDispose;
+    }
+    [globalThis.Symbol.dispose]() {
+        void this.dispose();
+    }
+    dispose() {
+        return this.disposePromise ??= this.disposeWorker();
+    }
+    async disposeWorker() {
+        if (this.disposed)
+            return;
+        this.disposed = true;
+        try {
+            await this.client.apiRequest("disposeBuildOrchestrator", {
+                buildOrchestratorID: this.id,
+            });
+        }
+        finally {
+            this.onDispose();
+        }
+    }
+    async build(project) {
+        this.ensureNotDisposed();
+        const response = await this.client.apiRequest("build", {
+            buildOrchestratorID: this.id,
+            ...(project !== undefined ? { project } : {}),
+        });
+        return response;
+    }
+    async buildReferences(project) {
+        this.ensureNotDisposed();
+        const response = await this.client.apiRequest("buildReferences", {
+            buildOrchestratorID: this.id,
+            project,
+        });
+        return response;
+    }
+    async clean(project) {
+        this.ensureNotDisposed();
+        const response = await this.client.apiRequest("cleanBuild", {
+            buildOrchestratorID: this.id,
+            ...(project !== undefined ? { project } : {}),
+        });
+        return response;
+    }
+    async cleanReferences(project) {
+        this.ensureNotDisposed();
+        const response = await this.client.apiRequest("cleanReferences", {
+            buildOrchestratorID: this.id,
+            ...(project !== undefined ? { project } : {}),
+        });
+        return response;
+    }
+    isDisposed() {
+        return this.disposed;
+    }
+    ensureNotDisposed() {
+        if (this.disposed) {
+            throw new Error("Build orchestrator is disposed");
+        }
+    }
+}
 function toEmitOutput(response) {
     const outputFiles = new Map();
     for (const { fileName, ...outputFile } of response.outputFiles) {
@@ -1383,14 +1599,14 @@ export class Checker {
             const data = await this.client.apiRequest("getTypesOfSymbols", {
                 snapshot: this.snapshotId,
                 project: this.project.id,
-                symbols: symbolOrSymbols.map(s => s.id),
+                symbols: symbolOrSymbols.map(symbol => symbol.reference),
             });
             return data.map(d => this.objectRegistry.getOrCreateType(d));
         }
         const data = await this.client.apiRequest("getTypeOfSymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbolOrSymbols.id,
+            symbol: symbolOrSymbols.reference,
         });
         return this.objectRegistry.getOrCreateType(data);
     }
@@ -1403,7 +1619,7 @@ export class Checker {
         const data = await this.client.apiRequest("getDeclaredTypeOfSymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return this.objectRegistry.getOrCreateType(data);
     }
@@ -1417,7 +1633,7 @@ export class Checker {
         const data = await this.client.apiRequest("getNonMissingTypeOfSymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return this.objectRegistry.getOrCreateType(data);
     }
@@ -1426,7 +1642,7 @@ export class Checker {
             snapshot: this.snapshotId,
             project: this.project.id,
             file,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return (data ?? []).map(h => new NodeHandle(h, this.project));
     }
@@ -1634,7 +1850,7 @@ export class Checker {
         const data = await this.client.apiRequest("getTypeOfSymbolAtLocation", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
             location: getNodeId(location),
         });
         return this.objectRegistry.getOrCreateType(data);
@@ -1752,7 +1968,7 @@ export class Checker {
         return this.client.apiRequest("isReadonlySymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
     }
     /** Get the return type of a signature. Always returns a type. */
@@ -1906,7 +2122,7 @@ export class Checker {
         const data = await this.client.apiRequest("getAliasedSymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return this.objectRegistry.getOrCreateSymbol(data);
     }
@@ -1918,14 +2134,14 @@ export class Checker {
         return this.client.apiRequest("getFullyQualifiedName", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
     }
     async getImmediateAliasedSymbol(symbol) {
         const data = await this.client.apiRequest("getImmediateAliasedSymbol", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return data ? this.objectRegistry.getOrCreateSymbol(data) : undefined;
     }
@@ -1937,7 +2153,7 @@ export class Checker {
             const data = await this.client.apiRequest("getTargetSymbol", {
                 snapshot: this.snapshotId,
                 project: this.project.id,
-                symbol: symbol.id,
+                symbol: symbol.reference,
             });
             return this.objectRegistry.getOrCreateSymbol(data);
         }
@@ -1947,7 +2163,7 @@ export class Checker {
         const data = await this.client.apiRequest("getExportSymbolOfSymbolForChecker", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return this.objectRegistry.getOrCreateSymbol(data);
     }
@@ -2005,7 +2221,7 @@ export class Checker {
         const data = await this.client.apiRequest("getExportsOfModule", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return data ? data.map(d => this.objectRegistry.getOrCreateSymbol(d)) : [];
     }
@@ -2013,7 +2229,7 @@ export class Checker {
         const data = await this.client.apiRequest("getMemberInModuleExports", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
             name,
         });
         return data ? this.objectRegistry.getOrCreateSymbol(data) : undefined;
@@ -2022,7 +2238,7 @@ export class Checker {
         const data = await this.client.apiRequest("getJsDocTags", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
         return data ?? [];
     }
@@ -2030,7 +2246,7 @@ export class Checker {
         return this.client.apiRequest("getDocumentationComment", {
             snapshot: this.snapshotId,
             project: this.project.id,
-            symbol: symbol.id,
+            symbol: symbol.reference,
         });
     }
     /**
@@ -2113,71 +2329,89 @@ export class NodeHandle {
      * is remembered so callers don't have to pass it explicitly.
      */
     canonicalProject;
+    /** The owning source file of a file-owned symbol's declaration. */
+    fileOwner;
     index;
     kind;
     path;
-    constructor(handle, canonicalProject) {
+    constructor(handle, canonicalProject, fileOwner) {
         const parsed = parseNodeHandle(handle);
         this.index = parsed.index;
         this.kind = parsed.kind;
         this.path = parsed.path;
         this.canonicalProject = canonicalProject;
+        this.fileOwner = fileOwner;
     }
     /**
      * Resolve this handle to the actual AST node by fetching the source file from a project
      * and looking up the node by index. If no project is passed, the project that produced
-     * the handle is used.
+     * the handle is used. Declarations of file-owned symbols identify an exact source file and
+     * resolve through it, independently of any project.
      */
     async resolve(project = this.canonicalProject) {
+        if (this.fileOwner) {
+            const sourceFile = this.fileOwner.record.file ?? await this.fetchOwnerFile(this.fileOwner);
+            return sourceFile.getOrCreateNodeAtIndex(this.index);
+        }
+        if (!project)
+            throw new Error(`Node handle for '${this.path}' has no project context`);
         const sourceFile = await project.program.getSourceFile(this.path);
         if (!sourceFile) {
             return undefined;
         }
         return sourceFile.getOrCreateNodeAtIndex(this.index);
     }
+    async fetchOwnerFile(fileOwner) {
+        const data = await fileOwner.client.apiRequestBinary("getCachedSourceFile", { file: fileOwner.record.descriptor });
+        if (!data)
+            throw new Error(`Source file '${fileOwner.record.descriptor.fileName}' is not available`);
+        return fileOwner.cache.attachFile(fileOwner.record, new RemoteSourceFile(data, new Wtf8Decoder(), fileOwner.client.getTimingCollector()));
+    }
 }
 export class Symbol {
-    objectRegistry;
-    /**
-     * The project this symbol was first observed in, used as the default project for
-     * lookups that need a project context (members/exports/parent). Symbols are shared
-     * snapshot-wide, so these lookups can otherwise be ambiguous about which project to use.
-     */
-    canonicalProject;
-    id;
+    storage;
+    get id() {
+        return this.reference.id;
+    }
     /** The escaped (`__String`) name, used as the key in member/export tables. */
     escapedName;
     /** The display name (escaped underscores removed). */
     name;
     flags;
     checkFlags;
+    /** @internal */
+    reference;
     declarations;
     valueDeclaration;
     parent;
     exportSymbol;
     membersCache;
     exportsCache;
-    constructor(data, objectRegistry) {
-        this.objectRegistry = objectRegistry;
-        this.id = data.id;
+    constructor(data, storage) {
+        if (data.reference.kind !== storage.kind)
+            throw new Error(`Symbol ${data.reference.id} has mismatched ownership and storage`);
+        this.storage = storage;
+        this.reference = data.reference;
         this.escapedName = data.name;
         this.name = unescapeLeadingUnderscores(data.name);
         this.flags = data.flags;
         this.checkFlags = data.checkFlags;
-        const canonicalProject = objectRegistry.getProject(data.project);
-        if (!canonicalProject) {
-            throw new Error(`Symbol ${data.id} references unknown canonical project '${data.project}'`);
-        }
-        this.canonicalProject = canonicalProject;
-        this.declarations = (data.declarations ?? []).map(d => new NodeHandle(d, canonicalProject));
-        this.valueDeclaration = data.valueDeclaration ? new NodeHandle(data.valueDeclaration, canonicalProject) : undefined;
+        // A file-owned symbol has no canonical project; its declarations resolve through its file.
+        const project = storage.kind === SymbolOwnerKind.Snapshot ? storage.registry.project : undefined;
+        const fileOwner = storage.kind === SymbolOwnerKind.File ? storage.owner : undefined;
+        this.declarations = (data.declarations ?? []).map(handle => new NodeHandle(handle, project, fileOwner));
+        this.valueDeclaration = data.valueDeclaration
+            ? new NodeHandle(data.valueDeclaration, project, fileOwner)
+            : undefined;
         if (data.parent !== undefined)
             this.parent = data.parent;
         if (data.exportSymbol !== undefined)
             this.exportSymbol = data.exportSymbol;
     }
     async getParent() {
-        return this.objectRegistry.fetchSymbol(this, "getParentOfSymbol", this.parent, this.canonicalProject.id);
+        if (!this.parent)
+            return undefined;
+        return this.fetchSymbol("getParentOfSymbol", this.parent);
     }
     /**
      * Get this symbol's members keyed by escaped name. The result is cached on
@@ -2194,7 +2428,7 @@ export class Symbol {
         return this.exportsCache ??= this.fetchSymbolTable("getExportsOfSymbol");
     }
     async fetchSymbolTable(method) {
-        const symbols = await this.objectRegistry.fetchSymbols(this, method, undefined, this.canonicalProject.id);
+        const symbols = await this.fetchSymbols(method);
         const table = new Map();
         for (const symbol of symbols) {
             table.set(symbol.escapedName, symbol);
@@ -2204,13 +2438,42 @@ export class Symbol {
     async getExportSymbol() {
         if (!this.exportSymbol)
             return this;
-        return this.objectRegistry.fetchSymbol(this, "getExportSymbolOfSymbol", this.exportSymbol, this.canonicalProject.id);
+        return this.fetchSymbol("getExportSymbolOfSymbol", this.exportSymbol);
     }
     async getJsDocTags(checker) {
         return checker.getJsDocTagsOfSymbol(this);
     }
     async getDocumentationComment(checker) {
         return checker.getDocumentationCommentOfSymbol(this);
+    }
+    async fetchSymbol(method, reference) {
+        if (this.storage.kind === SymbolOwnerKind.Snapshot) {
+            return this.storage.registry.fetchSymbol(this, method, reference);
+        }
+        const fileOwner = this.storage.owner;
+        // A file-owned symbol's relationships are always owned by the same file.
+        const cached = reference.file === fileOwner.record.descriptor.nodeId ? fileOwner.record.symbols.get(reference.id) : undefined;
+        if (cached)
+            return cached;
+        const data = await fileOwner.client.apiRequest(method, { symbol: this.reference });
+        if (!data)
+            throw new Error(`${method} returned null symbol for Symbol ${this.id}`);
+        return this.internFileSymbol(fileOwner, data);
+    }
+    async fetchSymbols(method) {
+        if (this.storage.kind === SymbolOwnerKind.Snapshot) {
+            return this.storage.registry.fetchSymbols(this, method);
+        }
+        const fileOwner = this.storage.owner;
+        const data = await fileOwner.client.apiRequest(method, { symbol: this.reference });
+        return data?.map(symbol => this.internFileSymbol(fileOwner, symbol)) ?? [];
+    }
+    internFileSymbol(fileOwner, data) {
+        validateSymbolResponse(data);
+        const reference = data.reference;
+        if (reference.kind !== SymbolOwnerKind.File)
+            throw new Error(`Symbol ${reference.id} is not file-owned`);
+        return fileOwner.cache.getOrCreateSymbol(fileOwner.record, reference.file, reference.id, () => new Symbol(data, { kind: SymbolOwnerKind.File, owner: fileOwner }));
     }
 }
 class TypeObject {

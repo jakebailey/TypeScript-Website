@@ -1,4 +1,4 @@
-import type { JSDocComment, JSDocTag } from "./ast.generated.ts";
+import type { JSDoc, JSDocComment, JSDocTag } from "./ast.generated.ts";
 import { type Node, type NodeArray, SyntaxKind } from "./ast.ts";
 /** Get all JSDoc tags related to a node, including those on parent nodes. */
 export declare function getJSDocTags(node: Node): readonly JSDocTag[];
@@ -8,4 +8,5 @@ export declare function getAllJSDocTags<T extends JSDocTag>(node: Node, predicat
 export declare function getAllJSDocTagsOfKind(node: Node, kind: SyntaxKind): readonly JSDocTag[];
 /** Gets the text of a jsdoc comment, flattening links to their text. */
 export declare function getTextOfJSDocComment(comment?: string | NodeArray<JSDocComment>): string | undefined;
+export declare function getJSDocCommentsAndTags(hostNode: Node): (JSDoc | JSDocTag)[];
 //# sourceMappingURL=jsdoc.d.ts.map

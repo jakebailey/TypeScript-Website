@@ -13,7 +13,7 @@ const legacyWebsiteStaticDirectory = resolve(websiteDirectory, "packages/typescr
 const serve = process.argv.includes("--serve")
 const playgroundBase = serve ? "/" : process.env.PLAYGROUND_BASE ?? "/play/v2/"
 
-const wasmFile = resolve(vendorDirectory, "typescript-wasip1-wasm/dist/tsc.wasm")
+const wasmFile = resolve(vendorDirectory, "typescript-wasip1-wasm/lib/tsc.wasm")
 const libDirectory = resolve(vendorDirectory, "lib")
 const configSchema = resolve(websiteDirectory, "packages/tsconfig-reference/scripts/schema/result/schema.json")
 const releaseIndex = resolve(packageDirectory, "vendor/versions.json")

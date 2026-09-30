@@ -1,4 +1,5 @@
-import { type FileReference, ModifierFlags, type Node, SyntaxKind } from "../../ast/index.ts";
+import { type FileReference, type Node, SyntaxKind } from "../../ast/index.ts";
+export { modifierToFlag } from "../../ast/modifiers.ts";
 import type { TimingCollector } from "../timing.ts";
 import { NODE_DATA_TYPE_CHILDREN, NODE_DATA_TYPE_EXTENDED, NODE_DATA_TYPE_STRING } from "./protocol.ts";
 export declare const popcount8: number[];
@@ -41,7 +42,8 @@ export declare function readSourceFileHash(data: DataView): string;
  * allowing the client to distinguish files parsed with different options.
  */
 export declare function readParseOptionsKey(data: DataView): string;
-export declare function modifierToFlag(kind: SyntaxKind): ModifierFlags;
+export declare function readSourceFileLease(data: DataView): number;
+export declare function readSourceFileNodeId(data: DataView): string;
 export declare class RemoteNodeBase {
     parent: any;
     view: DataView;

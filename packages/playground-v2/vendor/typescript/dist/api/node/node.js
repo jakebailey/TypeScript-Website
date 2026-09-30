@@ -1,12 +1,12 @@
 import { computeLineStarts, NodeFlags, SpanMap, SpanMapFeature, SpanMapKind, SyntaxKind, TokenFlags, } from "../../ast/index.js";
 import { MsgpackReader } from "./msgpack.js";
 import { RemoteNode, RemoteNodeList, } from "./node.generated.js";
-import { NODE_EXTENDED_DATA_MASK, } from "./node.infrastructure.js";
+import { NODE_EXTENDED_DATA_MASK, readParseOptionsKey, readSourceFileHash, readSourceFileNodeId, } from "./node.infrastructure.js";
 import { HEADER_OFFSET_EXTENDED_DATA, HEADER_OFFSET_NODES, HEADER_OFFSET_STRING_TABLE, HEADER_OFFSET_STRING_TABLE_OFFSETS, HEADER_OFFSET_STRUCTURED_DATA, KIND_NODE_LIST, NODE_LEN, NODE_OFFSET_KIND, NODE_OFFSET_PARENT, } from "./protocol.js";
 import { Wtf8Decoder } from "./wtf8.js";
 // Re-export everything consumers need from the other two files.
 export { RemoteNode, RemoteNodeList } from "./node.generated.js";
-export { readParseOptionsKey, readSourceFileHash, RemoteNodeBase } from "./node.infrastructure.js";
+export { readParseOptionsKey, readSourceFileHash, readSourceFileLease, readSourceFileNodeId, RemoteNodeBase } from "./node.infrastructure.js";
 const sourceFileExtendedDataOffsets = {
     Text: 0,
     FileName: 4,
@@ -76,6 +76,18 @@ export class RemoteSourceFile extends RemoteNode {
         // Every node slot is materializable on demand except the nil sentinel at
         // index 0 and the source-file node at index 1, which is pre-materialized.
         timing?.recordSourceFileFetched(Math.max(0, this.nodes.length - 2));
+    }
+    /** @internal */
+    get contentHash() {
+        return readSourceFileHash(this.view);
+    }
+    /** @internal */
+    get parseOptionsKey() {
+        return readParseOptionsKey(this.view);
+    }
+    /** @internal */
+    get nodeId() {
+        return readSourceFileNodeId(this.view);
     }
     readFileReferences(structuredDataOffset) {
         if (structuredDataOffset === NO_STRUCTURED_DATA) {

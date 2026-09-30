@@ -2,7 +2,7 @@
  * Shared utilities for the TypeScript API client.
  */
 import type { AsyncTransport } from "./async/transport.ts";
-import type { FileSystem } from "./fs.ts";
+import type { FileSystemCallbacks } from "./fs.ts";
 import type { SyncTransport } from "./sync/transport.ts";
 export interface ClientSocketOptions {
     /** Path to the Unix domain socket or Windows named pipe for API communication */
@@ -15,8 +15,10 @@ export interface ClientSpawnOptions {
     tsserverPath?: string | undefined;
     /** Current working directory */
     cwd?: string | undefined;
-    /** Virtual filesystem callbacks */
-    fs?: FileSystem | undefined;
+    /** Host filesystem callbacks. */
+    fs?: FileSystemCallbacks | undefined;
+    /** Whether file names are case-sensitive. Inferred from the client filesystem when omitted. */
+    useCaseSensitiveFileNames?: boolean | undefined;
     /** Allow trusted projects to execute configured external content mapper processes. */
     runExternalCode?: boolean | undefined;
     /** Maximum encoded byte size of each batch response page. Defaults to 300 million bytes. Individual responses can be larger than this size, but this controls where batch pages are cutoff. */
@@ -42,7 +44,7 @@ export interface ClientTransportOptions {
     /** Maximum encoded byte size of each batch response page. Defaults to 300 million bytes. Individual responses can be larger than this size, but this controls where batch pages are cutoff. */
     maxResponseBytesPerPage?: number | undefined;
     /** Virtual filesystem callbacks used by transports that support them. */
-    fs?: FileSystem | undefined;
+    fs?: FileSystemCallbacks | undefined;
     /** Collect timing information for requests made through the transport. */
     collectTiming?: boolean | undefined;
 }
@@ -59,7 +61,7 @@ export interface AsyncClientTransportOptions {
     /** Maximum encoded byte size of each batch response page. Defaults to 300 million bytes. Individual responses can be larger than this size, but this controls where batch pages are cutoff. */
     maxResponseBytesPerPage?: number | undefined;
     /** Virtual filesystem callbacks used by transports that support them. */
-    fs?: FileSystem | undefined;
+    fs?: FileSystemCallbacks | undefined;
     /** Collect timing information for requests made through the transport. */
     collectTiming?: boolean | undefined;
 }

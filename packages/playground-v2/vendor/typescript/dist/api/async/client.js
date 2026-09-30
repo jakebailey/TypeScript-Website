@@ -1,5 +1,5 @@
 import { createMessageConnection, RequestType, SocketMessageReader, SocketMessageWriter, StreamMessageReader, StreamMessageWriter, } from "#vscode-jsonrpc/node";
-import { fsCallbackNames, } from "../fs.js";
+import { configureFileSystemCallbacks, encodeFileSystemCallbackResult, } from "../fsCallbacks.js";
 import { getAPIProcessArgs, isAsyncTransportOptions, isSpawnOptions, resolveExePath, } from "../options.js";
 import { combineTimingInfo, disabledServerTimingInfo, disabledTimingInfo, TimingCollector, } from "../timing.js";
 import { TransportClient } from "./transportClient.js";
@@ -28,8 +28,11 @@ export class Client {
             return;
         }
         this.options = options;
-        if (isSpawnOptions(options) && options.collectTiming) {
-            this.timing = new TimingCollector();
+        if (isSpawnOptions(options)) {
+            configureFileSystemCallbacks(options.fs);
+            if (options.collectTiming) {
+                this.timing = new TimingCollector();
+            }
         }
     }
     connect() {
@@ -57,17 +60,9 @@ export class Client {
         const { spawn } = await import("node:child_process");
         return new Promise((resolve, reject) => {
             const args = getAPIProcessArgs(options, true);
-            // Enable virtual FS callbacks for each provided FS function
-            const enabledCallbacks = [];
-            if (options.fs) {
-                for (const name of fsCallbackNames) {
-                    if (options.fs[name]) {
-                        enabledCallbacks.push(name);
-                    }
-                }
-            }
-            if (enabledCallbacks.length > 0) {
-                args.push(`--callbacks=${enabledCallbacks.join(",")}`);
+            const fsConfiguration = configureFileSystemCallbacks(options.fs);
+            if (fsConfiguration.arguments.length > 0) {
+                args.push(`--callbacks=${fsConfiguration.arguments.join(",")}`);
             }
             this.process = spawn(resolveExePath(options), args, {
                 stdio: ["pipe", "pipe", "inherit"],
@@ -82,7 +77,7 @@ export class Client {
             const reader = new StreamMessageReader(this.process.stdout);
             const writer = new StreamMessageWriter(this.process.stdin);
             this.connection = createMessageConnection(reader, writer);
-            this.registerFSCallbacks(this.connection, options.fs);
+            this.registerFSCallbacks(this.connection, options.fs, fsConfiguration);
             this.connection.listen();
         });
     }
@@ -102,36 +97,27 @@ export class Client {
             });
         });
     }
-    registerFSCallbacks(connection, fs) {
+    registerFSCallbacks(connection, fs, configuration) {
         if (!fs)
             return;
-        for (const name of fsCallbackNames) {
+        for (const name of configuration.callbackNames) {
             if (name === "writeFile") {
-                if (!fs.writeFile)
-                    continue;
                 const callback = fs.writeFile;
+                if (typeof callback !== "function")
+                    throw new Error("Invalid writeFile callback configuration");
                 const requestType = new RequestType(name);
                 connection.onRequest(requestType, (arg) => {
-                    callback(arg.path, arg.data);
-                    return null;
+                    return encodeFileSystemCallbackResult(name, callback(arg.path, arg.data));
                 });
                 continue;
             }
             const callback = fs[name];
-            if (callback) {
-                const requestType = new RequestType(name);
-                connection.onRequest(requestType, (arg) => {
-                    const result = callback(arg);
-                    if (name === "readFile") {
-                        // readFile has 3 returns: string (content), null (not found), undefined (fall back).
-                        // JSON-RPC can't distinguish null from undefined, so wrap in object.
-                        if (result === undefined)
-                            return null;
-                        return { content: result };
-                    }
-                    return result ?? null;
-                });
-            }
+            if (typeof callback !== "function")
+                throw new Error(`Invalid ${name} callback configuration`);
+            const requestType = new RequestType(name);
+            connection.onRequest(requestType, (arg) => {
+                return encodeFileSystemCallbackResult(name, callback(arg));
+            });
         }
     }
     async sendRequestWithTiming(requestType, params) {

@@ -1,5 +1,25 @@
+import { SymbolOwnerKind } from "#enums/symbolOwnerKind";
 import { documentURIToFileName, fileNameToDocumentURI, } from "./path.js";
 export * from "./proto.generated.js";
+export function validateSymbolOwner(owner) {
+    switch (owner.kind) {
+        case SymbolOwnerKind.File:
+            if (!owner.file || owner.snapshot !== undefined || owner.project !== undefined) {
+                throw new Error("Invalid file symbol owner");
+            }
+            return;
+        case SymbolOwnerKind.Snapshot:
+            if (owner.file !== undefined || owner.snapshot === undefined || owner.project === undefined) {
+                throw new Error("Invalid snapshot symbol owner");
+            }
+            return;
+        default:
+            throw new Error(`Invalid symbol owner kind '${owner.kind}'`);
+    }
+}
+export function validateSymbolResponse(response) {
+    validateSymbolOwner(response.reference);
+}
 /**
  * Resolves a DocumentIdentifier to a file name.
  * If the identifier contains a URI, it is converted to a file name.

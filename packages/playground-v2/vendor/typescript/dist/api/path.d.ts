@@ -21,6 +21,7 @@
  * getRootLength("file://server/path") === 14 // "file://server/"
  * getRootLength("http://server") === 13      // "http://server"
  * getRootLength("http://server/path") === 14 // "http://server/"
+ * getRootLength("^/untitled/ts-nul-authority/Untitled-1") === 2 // "^/"
  * ```
  *
  * @internal

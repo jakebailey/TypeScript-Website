@@ -806,7 +806,7 @@ export function isAccessExpression(node) {
 isAccessExpression.Handle = isAccessExpression;
 export function isDeclarationName(node) {
     const kind = node.kind;
-    return kind === SyntaxKind.Identifier || kind === SyntaxKind.PrivateIdentifier || kind === SyntaxKind.StringLiteral || kind === SyntaxKind.NumericLiteral || kind === SyntaxKind.BigIntLiteral || kind === SyntaxKind.NoSubstitutionTemplateLiteral || kind === SyntaxKind.ComputedPropertyName || kind === SyntaxKind.ObjectBindingPattern || kind === SyntaxKind.ArrayBindingPattern || kind === SyntaxKind.ElementAccessExpression;
+    return kind === SyntaxKind.Identifier || kind === SyntaxKind.PrivateIdentifier || kind === SyntaxKind.StringLiteral || kind === SyntaxKind.NumericLiteral || kind === SyntaxKind.BigIntLiteral || kind === SyntaxKind.NoSubstitutionTemplateLiteral || kind === SyntaxKind.ComputedPropertyName || kind === SyntaxKind.ObjectBindingPattern || kind === SyntaxKind.ArrayBindingPattern || kind === SyntaxKind.PropertyAccessExpression || kind === SyntaxKind.ElementAccessExpression;
 }
 isDeclarationName.Handle = isDeclarationName;
 export function isModuleName(node) {

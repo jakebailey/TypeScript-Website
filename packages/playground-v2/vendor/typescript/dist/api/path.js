@@ -58,6 +58,7 @@ function getFileUrlVolumeSeparatorEnd(url, start) {
  * getRootLength("file://server/path") === 14 // "file://server/"
  * getRootLength("http://server") === 13      // "http://server"
  * getRootLength("http://server/path") === 14 // "http://server/"
+ * getRootLength("^/untitled/ts-nul-authority/Untitled-1") === 2 // "^/"
  * ```
  *
  * @internal
@@ -91,6 +92,8 @@ function getEncodedRootLength(path) {
         if (path.length === 2)
             return 2; // DOS: "c:" (but not "c:d")
     }
+    if (isDynamicFileName(path))
+        return 2;
     // URL
     const schemeEnd = path.indexOf(urlSchemeSeparator);
     if (schemeEnd !== -1) {

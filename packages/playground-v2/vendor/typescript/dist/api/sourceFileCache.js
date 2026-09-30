@@ -1,19 +1,39 @@
 /**
  * Builds a composite ref key from a snapshot ID and project ID.
  */
-function refKey(snapshotId, projectId) {
-    return `${snapshotId}:${projectId}`;
+function snapshotRefKey(snapshotId, projectId) {
+    return `snapshot:${snapshotId}:${projectId}`;
+}
+function leaseRefKey(leaseId) {
+    return `lease:${leaseId}`;
+}
+function descriptorFromFile(file) {
+    return {
+        fileName: file.fileName,
+        path: file.path,
+        contentHash: file.contentHash,
+        parseOptionsKey: file.parseOptionsKey,
+        scriptKind: file.scriptKind,
+        nodeId: file.nodeId,
+    };
+}
+function descriptorsEqual(left, right) {
+    return left.fileName === right.fileName &&
+        left.path === right.path &&
+        left.contentHash === right.contentHash &&
+        left.parseOptionsKey === right.parseOptionsKey &&
+        left.scriptKind === right.scriptKind &&
+        left.nodeId === right.nodeId;
 }
 /**
- * Client-side cache for source files keyed by (path, parseOptionsKey, contentHash).
+ * Client-side cache for source files keyed by (path, fileName, scriptKind, parseOptionsKey, contentHash).
  *
  * Supports multiple versions of the same file at the same path (e.g., from
  * different snapshots with different file contents). Each version is identified
- * by its content hash and parse options key.
+ * by its script kind, content hash, and parse options key.
  *
- * Entries are ref-counted by (snapshot, project) pairs. When a snapshot is
- * disposed, all refs for that snapshot across all projects are released,
- * and entries with no remaining references are evicted.
+ * Entries are ref-counted by (snapshot, project) pairs and direct source-file
+ * leases. Releasing an owner evicts entries with no remaining references.
  *
  * When a new snapshot is created, unchanged cache entries from the previous
  * snapshot are retained per-project. Only files within changed or removed
@@ -24,6 +44,10 @@ export class SourceFileCache {
     cache = new Map();
     /** Map from snapshotId to (projectId → Set of paths fetched through that project) */
     snapshotProjectPaths = new Map();
+    /** Map from direct lease ID to its retained path */
+    leasePaths = new Map();
+    /** Map from source-file node ID to its record, for resolving compact symbol references */
+    recordsByNodeId = new Map();
     /**
      * Get a cached source file already retained for the given (snapshot, project) pair.
      * This does not require a content hash or parse options key — it returns the entry
@@ -37,31 +61,105 @@ export class SourceFileCache {
         const entries = this.cache.get(path);
         if (!entries)
             return undefined;
-        const key = refKey(snapshotId, projectId);
+        const key = snapshotRefKey(snapshotId, projectId);
         const entry = entries.find(e => e.refs.has(key));
         return entry?.file;
+    }
+    get(file) {
+        return this.find(file)?.file;
+    }
+    getOrCreateRecord(file, snapshotId, projectId) {
+        let entries = this.cache.get(file.path);
+        if (!entries) {
+            entries = [];
+            this.cache.set(file.path, entries);
+        }
+        let record = this.findDescriptor(file, entries);
+        if (!record) {
+            record = this.addRecord(entries, { descriptor: file, refs: new Set(), symbols: new Map() });
+        }
+        this.retainRecordForSnapshot(record, snapshotId, projectId);
+        return record;
+    }
+    /** Find the live record for a source-file node ID without creating or retaining one. */
+    findRecord(nodeId) {
+        return this.recordsByNodeId.get(nodeId);
+    }
+    /** Retain an existing record for a snapshot/project that reused one of its cached objects. */
+    retainRecord(record, snapshotId, projectId) {
+        if (this.recordsByNodeId.get(record.descriptor.nodeId) !== record) {
+            throw new Error(`Source file record '${record.descriptor.fileName}' is no longer cached`);
+        }
+        this.retainRecordForSnapshot(record, snapshotId, projectId);
+    }
+    /** Attach a source file fetched by its descriptor to its existing record. */
+    attachFile(record, file) {
+        if (!descriptorsEqual(descriptorFromFile(file), record.descriptor)) {
+            throw new Error(`Source file does not match cached record '${record.descriptor.fileName}'`);
+        }
+        return record.file ??= file;
+    }
+    getOrCreateSymbol(record, file, id, create) {
+        if (!descriptorsEqual(file, record.descriptor)) {
+            throw new Error(`Symbol ${id} does not belong to '${record.descriptor.fileName}'`);
+        }
+        let symbol = record.symbols.get(id);
+        if (!symbol) {
+            symbol = create();
+            record.symbols.set(id, symbol);
+        }
+        return symbol;
     }
     /**
      * Store a source file in the cache and retain it for the given (snapshot, project) pair.
      * Returns the cached file — which may be an existing entry if the hash matches.
      */
-    set(path, file, parseOptionsKey, contentHash, snapshotId, projectId) {
-        let entries = this.cache.get(path);
+    set(file, snapshotId, projectId) {
+        const result = this.setWithRef(file, snapshotRefKey(snapshotId, projectId));
+        this.trackPath(snapshotId, projectId, file.path);
+        return result;
+    }
+    /**
+     * Store a source file in the cache and retain it for a direct lease.
+     * Returns the cached file so leased and program-owned files share identity.
+     */
+    setForLease(file, leaseId) {
+        if (this.leasePaths.has(leaseId)) {
+            throw new Error(`Source file lease ${leaseId} is already cached`);
+        }
+        const result = this.setWithRef(file, leaseRefKey(leaseId));
+        this.leasePaths.set(leaseId, file.path);
+        return result;
+    }
+    setWithRef(file, ref) {
+        let entries = this.cache.get(file.path);
         if (!entries) {
             entries = [];
-            this.cache.set(path, entries);
+            this.cache.set(file.path, entries);
         }
-        const ref = refKey(snapshotId, projectId);
-        // Check if we already have this exact version
-        const existing = entries.find(e => e.parseOptionsKey === parseOptionsKey && e.contentHash === contentHash);
+        const existing = this.find(file, entries);
         if (existing) {
             existing.refs.add(ref);
-            this.trackPath(snapshotId, projectId, path);
+            existing.file ??= file;
             return existing.file;
         }
-        entries.push({ file, contentHash, parseOptionsKey, refs: new Set([ref]) });
-        this.trackPath(snapshotId, projectId, path);
+        this.addRecord(entries, { file, descriptor: descriptorFromFile(file), refs: new Set([ref]), symbols: new Map() });
         return file;
+    }
+    addRecord(entries, record) {
+        entries.push(record);
+        this.recordsByNodeId.set(record.descriptor.nodeId, record);
+        return record;
+    }
+    retainRecordForSnapshot(record, snapshotId, projectId) {
+        record.refs.add(snapshotRefKey(snapshotId, projectId));
+        this.trackPath(snapshotId, projectId, record.descriptor.path);
+    }
+    find(file, entries = this.cache.get(file.path)) {
+        return this.findDescriptor(descriptorFromFile(file), entries);
+    }
+    findDescriptor(file, entries = this.cache.get(file.path)) {
+        return entries?.find(entry => descriptorsEqual(entry.descriptor, file));
     }
     /**
      * Retain cache entries from a previous snapshot for a new snapshot.
@@ -88,8 +186,8 @@ export class SourceFileCache {
                 for (const p of projectChanges.deletedFiles ?? [])
                     invalidPaths.add(p);
             }
-            const prevRef = refKey(previousSnapshotId, projectId);
-            const newRef = refKey(newSnapshotId, projectId);
+            const prevRef = snapshotRefKey(previousSnapshotId, projectId);
+            const newRef = snapshotRefKey(newSnapshotId, projectId);
             for (const path of paths) {
                 if (invalidPaths?.has(path))
                     continue;
@@ -115,23 +213,36 @@ export class SourceFileCache {
         if (!projectMap)
             return;
         for (const [projectId, paths] of projectMap) {
-            const key = refKey(snapshotId, projectId);
+            const key = snapshotRefKey(snapshotId, projectId);
             for (const path of paths) {
-                const entries = this.cache.get(path);
-                if (!entries)
-                    continue;
-                for (let i = entries.length - 1; i >= 0; i--) {
-                    entries[i].refs.delete(key);
-                    if (entries[i].refs.size === 0) {
-                        entries.splice(i, 1);
-                    }
-                }
-                if (entries.length === 0) {
-                    this.cache.delete(path);
-                }
+                this.releaseRef(path, key);
             }
         }
         this.snapshotProjectPaths.delete(snapshotId);
+    }
+    releaseLease(leaseId) {
+        const path = this.leasePaths.get(leaseId);
+        if (path === undefined)
+            return;
+        this.releaseRef(path, leaseRefKey(leaseId));
+        this.leasePaths.delete(leaseId);
+    }
+    releaseRef(path, ref) {
+        const entries = this.cache.get(path);
+        if (!entries)
+            return;
+        for (let i = entries.length - 1; i >= 0; i--) {
+            entries[i].refs.delete(ref);
+            if (entries[i].refs.size === 0) {
+                const [evicted] = entries.splice(i, 1);
+                if (this.recordsByNodeId.get(evicted.descriptor.nodeId) === evicted) {
+                    this.recordsByNodeId.delete(evicted.descriptor.nodeId);
+                }
+            }
+        }
+        if (entries.length === 0) {
+            this.cache.delete(path);
+        }
     }
     trackPath(snapshotId, projectId, path) {
         let projectMap = this.snapshotProjectPaths.get(snapshotId);
@@ -152,6 +263,8 @@ export class SourceFileCache {
     clear() {
         this.cache.clear();
         this.snapshotProjectPaths.clear();
+        this.leasePaths.clear();
+        this.recordsByNodeId.clear();
     }
     /**
      * Get the number of unique paths in the cache.

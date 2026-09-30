@@ -3,7 +3,7 @@ import { SyntaxKind, } from "./ast.js";
 import { isIdentifier, isJSDoc, isJSDocOverloadTag, isJSDocParameterTag, isJSDocSatisfiesTag, isJSDocTemplateTag, isJSDocTypeTag, isParenthesizedExpression, isPrivateIdentifier, } from "./is.generated.js";
 /** Get all JSDoc tags related to a node, including those on parent nodes. */
 export function getJSDocTags(node) {
-    return getJSDocCommentsAndTags(node);
+    return getJSDocCommentsAndTags(node).flatMap(j => isJSDoc(j) ? j.tags ?? [] : j);
 }
 /** Gets all JSDoc tags that match a specified predicate */
 export function getAllJSDocTags(node, predicate) {
@@ -61,17 +61,23 @@ function filterOwnedJSDocTags(hostNode, comments) {
     const result = [];
     const lastJSDoc = comments[comments.length - 1];
     for (const jsDoc of comments) {
-        if (!jsDoc.tags) {
-            continue;
-        }
         if (jsDoc === lastJSDoc) {
-            for (const tag of jsDoc.tags) {
-                if (ownsJSDocTag(hostNode, tag)) {
-                    result.push(tag);
+            const onlyOwnTags = jsDoc.tags?.every(t => ownsJSDocTag(hostNode, t)) ?? true;
+            if (!onlyOwnTags && jsDoc.tags) {
+                for (const tag of jsDoc.tags) {
+                    if (ownsJSDocTag(hostNode, tag)) {
+                        result.push(tag);
+                    }
                 }
+            }
+            else {
+                result.push(jsDoc);
             }
         }
         else {
+            if (!jsDoc.tags) {
+                continue;
+            }
             // Tags from earlier comments only contribute their `@overload` tags.
             for (const tag of jsDoc.tags) {
                 if (isJSDocOverloadTag(tag)) {
@@ -139,7 +145,7 @@ function getNextJSDocCommentLocation(node) {
     }
     return undefined;
 }
-function getJSDocCommentsAndTags(hostNode) {
+export function getJSDocCommentsAndTags(hostNode) {
     const result = [];
     // Pull parameter comments from a declaring initializer (e.g. `var x = function () {}`).
     if (isVariableLike(hostNode)) {

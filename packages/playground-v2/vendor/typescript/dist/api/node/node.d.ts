@@ -3,7 +3,7 @@ import type { TimingCollector } from "../timing.ts";
 import { RemoteNode, RemoteNodeList } from "./node.generated.ts";
 import { type SourceFileInfo, type TextDecoder } from "./node.infrastructure.ts";
 export { RemoteNode, RemoteNodeList } from "./node.generated.ts";
-export { readParseOptionsKey, readSourceFileHash, RemoteNodeBase } from "./node.infrastructure.ts";
+export { readParseOptionsKey, readSourceFileHash, readSourceFileLease, readSourceFileNodeId, RemoteNodeBase } from "./node.infrastructure.ts";
 export declare class RemoteSourceFile extends RemoteNode implements SourceFileInfo {
     readonly nodes: (RemoteNode | RemoteNodeList)[];
     readonly _offsetNodes: number;
@@ -27,6 +27,12 @@ export declare class RemoteSourceFile extends RemoteNode implements SourceFileIn
     private _cachedDiagnosticDirectives;
     private _diagnosticDirectivesRead;
     constructor(data: Uint8Array, decoder: TextDecoder, timing?: TimingCollector);
+    /** @internal */
+    get contentHash(): string;
+    /** @internal */
+    get parseOptionsKey(): string;
+    /** @internal */
+    get nodeId(): string;
     readFileReferences(structuredDataOffset: number): readonly FileReference[];
     readNodeIndexArray(structuredDataOffset: number): readonly Node[];
     readStringArray(structuredDataOffset: number): readonly string[];
@@ -34,7 +40,7 @@ export declare class RemoteSourceFile extends RemoteNode implements SourceFileIn
     getOrCreateNodeAtIndex(index: number): Node;
     private get extendedDataOffset();
     get fileName(): string;
-    get path(): string;
+    get path(): Path;
     get languageVariant(): number;
     get scriptKind(): number;
     get referencedFiles(): readonly FileReference[];

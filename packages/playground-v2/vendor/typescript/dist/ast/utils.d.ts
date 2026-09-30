@@ -1,5 +1,6 @@
+import { ModifierFlags } from "#enums/modifierFlags";
 import { SyntaxKind } from "#enums/syntaxKind";
-import type { __String, HasExpression, HasInitializer, ObjectAssignmentInitializer, SourceFile } from "./ast.ts";
+import type { __String, Declaration, DeclarationName, Expression, HasExpression, HasInitializer, ObjectAssignmentInitializer, SourceFile } from "./ast.ts";
 import type { Node } from "./ast.ts";
 export declare function formatSyntaxKind(kind: SyntaxKind): string;
 /**
@@ -22,5 +23,8 @@ export declare function cast<TOut extends TIn, TIn = any>(value: TIn | undefined
 export declare function hasExpression(node: Node): node is HasExpression;
 export declare function hasInitializer(node: Node): node is HasInitializer;
 export declare function hasObjectAssignmentInitializer(node: Node): node is ObjectAssignmentInitializer;
+export declare function isExternalModule(file: SourceFile): boolean;
+export declare function getCombinedModifierFlags(node: Declaration): ModifierFlags;
+export declare function getNameOfDeclaration(declaration: Declaration | Expression | undefined): DeclarationName | undefined;
 export declare function cloneSourceFileData(sourceFile: SourceFile): Record<string, unknown>;
 //# sourceMappingURL=utils.d.ts.map

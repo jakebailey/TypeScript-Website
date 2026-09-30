@@ -197,7 +197,7 @@ function createWasiHost(options) {
     function hostWriteFile(iovsPointer, iovsLength, writtenPointer) {
         iovsPointer >>>= 0;
         writtenPointer >>>= 0;
-        if (!fileSystem?.writeFile)
+        if (typeof fileSystem?.writeFile !== "function")
             return errnoBadFileDescriptor;
         if (iovsLength !== 1)
             return errnoInvalidArgument;
