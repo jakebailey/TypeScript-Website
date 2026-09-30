@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "pnpm --filter @typescript/monaco-lsp-client build",
     "build": "node scripts/build.mjs",
+    "predev": "pnpm --filter @typescript/monaco-lsp-client build",
     "dev": "node scripts/build.mjs --serve",
     "test": "node scripts/smoke-test.mjs",
+    "pretypecheck": "pnpm --filter @typescript/monaco-lsp-client build",
     "typecheck": "tsc --noEmit",
     "vendor-resources": "node scripts/vendor-resources.mjs",
     "vendor-typescript": "node scripts/vendor-typescript.mjs"
@@ -16,7 +19,7 @@
     "@typescript/ata": "file:vendor/ata",
     "@typescript/typescript": "file:vendor/typescript",
     "@typescript/typescript-wasip1-wasm": "file:vendor/typescript-wasip1-wasm",
-    "@vscode/monaco-lsp-client": "file:vendor/vscode-monaco-lsp-client-0.1.0.tgz",
+    "@typescript/monaco-lsp-client": "workspace:*",
     "coi-serviceworker": "^0.1.7",
     "hack-font": "^3.3.0",
     "jsonc-parser": "^3.3.1",

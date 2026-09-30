@@ -1,4 +1,4 @@
-import { createTransportToWorker, MonacoLspClient } from "@vscode/monaco-lsp-client"
+import { createTransportToWorker, MonacoLspClient } from "@typescript/monaco-lsp-client"
 import * as monaco from "monaco-editor-core"
 import {
   conf as javascriptConfiguration,
