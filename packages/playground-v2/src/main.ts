@@ -1349,8 +1349,15 @@ function compilerFileContents() {
 
 function effectiveCompilerConfigText() {
   const configText = compilerOverrideState.effectiveConfigText
-  if (acquiredTypePackages.size === 0 || configOptionNode(configText, "types")) return configText
-  return setCompilerOption(configText, "types", [...acquiredTypePackages].sort())
+  const typePackages = implicitTypePackages()
+  return typePackages.length === 0 ? configText : setCompilerOption(configText, "types", typePackages)
+}
+
+function implicitTypePackages() {
+  if (acquiredTypePackages.size === 0 || configOptionNode(compilerOverrideState.effectiveConfigText, "types")) {
+    return []
+  }
+  return [...acquiredTypePackages].sort()
 }
 
 function refreshCompilerOverrides() {
@@ -1422,8 +1429,9 @@ function renderCompilerOverrides() {
     monaco.editor.setModelMarkers(model, "compiler-overrides", markers)
   }
 
-  if (effectiveConfigModel && effectiveConfigModel.getValue() !== compilerOverrideState.effectiveConfigText) {
-    effectiveConfigModel.setValue(compilerOverrideState.effectiveConfigText)
+  const effectiveConfigText = effectiveCompilerConfigText()
+  if (effectiveConfigModel && effectiveConfigModel.getValue() !== effectiveConfigText) {
+    effectiveConfigModel.setValue(effectiveConfigText)
   }
   const activeOverrides = compilerOverrideState.overrides.filter(override => override.applied)
   applyCompilerOverridesButton.hidden = activeOverrides.length === 0
@@ -1437,7 +1445,7 @@ function renderCompilerOverrides() {
 function registerCompilerOverrideFeatures() {
   monaco.editor.registerCommand("playground.showEffectiveConfig", () => {
     const uri = monaco.Uri.parse("playground:///effective-tsconfig.json")
-    effectiveConfigModel ??= monaco.editor.createModel(compilerOverrideState.effectiveConfigText, "json", uri)
+    effectiveConfigModel ??= monaco.editor.createModel(effectiveCompilerConfigText(), "json", uri)
     inputEditor.setModel(effectiveConfigModel)
     inputEditor.focus()
   })
@@ -1573,22 +1581,37 @@ function registerCompilerOverrideFeatures() {
     provideCodeLenses(model) {
       if (model.uri.path !== configFileName) return { lenses: [], dispose() {} }
       const active = compilerOverrideState.overrides.filter(override => override.applied)
-      if (active.length === 0) return { lenses: [], dispose() {} }
+      const typePackages = implicitTypePackages()
+      if (active.length === 0 && typePackages.length === 0) return { lenses: [], dispose() {} }
       const node = compilerOptionsNode(model.getValue())
       const position = node ? model.getPositionAt(node.offset) : new monaco.Position(1, 1)
+      const range = new monaco.Range(position.lineNumber, 1, position.lineNumber, 1)
+      const lenses: monaco.languages.CodeLens[] = []
+      if (active.length > 0) {
+        lenses.push({
+          command: {
+            id: "playground.showEffectiveConfig",
+            title: `${active.length} inline compiler override${
+              active.length === 1 ? "" : "s"
+            } active · View effective config`,
+          },
+          range,
+        })
+      }
+      if (typePackages.length > 0) {
+        lenses.push({
+          command: {
+            id: "playground.showEffectiveConfig",
+            title: `Automatic package types add compilerOptions.types: ${typePackages.join(
+              ", "
+            )} · View effective config`,
+          },
+          range,
+        })
+      }
       return {
         dispose() {},
-        lenses: [
-          {
-            command: {
-              id: "playground.showEffectiveConfig",
-              title: `${active.length} inline compiler override${
-                active.length === 1 ? "" : "s"
-              } active · View effective config`,
-            },
-            range: new monaco.Range(position.lineNumber, 1, position.lineNumber, 1),
-          },
-        ],
+        lenses,
       }
     },
   }
@@ -1775,6 +1798,7 @@ async function refreshTypeAcquisition(initial: boolean) {
     const addedFiles = await acquireTypes(source)
     typeAcquisitionFailure = undefined
     languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
+    renderCompilerOverrides()
     if (addedFiles > 0 && stradaBackend) {
       await compileStradaProject()
     } else if (addedFiles > 0 && useNativeCompiler) {

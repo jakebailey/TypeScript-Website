@@ -26,7 +26,7 @@ const helpIndex = {
     {
       title: "Package types",
       legacyIndexes: [4],
-      html: "<p>Imports from npm packages automatically acquire bundled declarations or matching <code>@types</code> packages. Downloaded declarations are cached and available to diagnostics, completion, hover, and go-to-definition.</p><p>Package JavaScript is not downloaded, so <strong>Run</strong> still supports only emitted project files and relative CommonJS imports.</p>",
+      html: "<p>Imports from npm packages automatically acquire bundled declarations or matching <code>@types</code> packages. Downloaded declarations are cached and available to diagnostics, completion, hover, and go-to-definition.</p><p>When <code>compilerOptions.types</code> is not specified, acquired <code>@types</code> packages are added to the effective configuration. TSConfig shows this automatic addition and links to the effective config. Package JavaScript is not downloaded, so <strong>Run</strong> still supports only emitted project files and relative CommonJS imports.</p>",
     },
     {
       title: "Editor navigation",
