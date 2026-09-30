@@ -82,7 +82,9 @@ export const setupTypeAcquisition = (config: ATABootstrapConfig) => {
     )
 
     const dtTreesOnly = dtTrees.filter(t => !("error" in t)) as NPMTreeMeta[]
-    const dtsFilesFromDT = dtTreesOnly.map(t => treeToDTSFiles(t, `/node_modules/@types/${getDTName(t.moduleName).replace("types__", "")}`))
+    const dtsFilesFromDT = dtTreesOnly.map(t =>
+      treeToDTSFiles(t, `/node_modules/@types/${getDTName(t.moduleName).replace("types__", "")}`)
+    )
 
     // Collect all the npm and DT DTS requests and flatten their arrays
     const allDTSFiles = dtsFilesFromNPM.concat(dtsFilesFromDT).reduce((p, c) => p.concat(c), [])
@@ -91,10 +93,15 @@ export const setupTypeAcquisition = (config: ATABootstrapConfig) => {
       config.delegate.started?.()
     }
 
-    // Grab the package.jsons for each dependency
-    for (const tree of treesOnly) {
-      let prefix = `/node_modules/${tree.moduleName}`
-      if (dtTreesOnly.includes(tree)) prefix = `/node_modules/@types/${getDTName(tree.moduleName).replace("types__", "")}`
+    // Grab the package.jsons for each package that supplied declarations.
+    const declarationTrees = [
+      ...hasDTS.map(tree => ({ prefix: `/node_modules/${tree.moduleName}`, tree })),
+      ...dtTreesOnly.map(tree => ({
+        prefix: `/node_modules/@types/${getDTName(tree.moduleName).replace("types__", "")}`,
+        tree,
+      })),
+    ]
+    for (const { prefix, tree } of declarationTrees) {
       const path = prefix + "/package.json"
       const pkgJSON = await getDTSFileForModuleWithVersion(config, tree.moduleName, tree.version, "/package.json")
 

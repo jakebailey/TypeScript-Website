@@ -58,7 +58,10 @@ export const mapModuleNameToModule = (moduleSpecifier: string) => {
     "zlib",
   ]
 
-  if (moduleSpecifier.indexOf("node:") === 0 || builtInNodeMods.includes(moduleSpecifier)) {
+  if (
+    moduleSpecifier.indexOf("node:") === 0 ||
+    builtInNodeMods.some(moduleName => moduleSpecifier === moduleName || moduleSpecifier.startsWith(`${moduleName}/`))
+  ) {
     return "node"
   }
 

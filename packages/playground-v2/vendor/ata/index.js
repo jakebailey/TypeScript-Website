@@ -137,7 +137,7 @@ var mapModuleNameToModule = (moduleSpecifier) => {
     "worker_threads",
     "zlib"
   ];
-  if (moduleSpecifier.indexOf("node:") === 0 || builtInNodeMods.includes(moduleSpecifier)) {
+  if (moduleSpecifier.indexOf("node:") === 0 || builtInNodeMods.some((moduleName2) => moduleSpecifier === moduleName2 || moduleSpecifier.startsWith(`${moduleName2}/`))) {
     return "node";
   }
   const [a = "", b = ""] = moduleSpecifier.split("/");
@@ -182,9 +182,14 @@ var setupTypeAcquisition = (config) => {
       if (allDTSFiles.length && depth === 0) {
         (_b = (_a = config.delegate).started) == null ? void 0 : _b.call(_a);
       }
-      for (const tree of treesOnly) {
-        let prefix = `/node_modules/${tree.moduleName}`;
-        if (dtTreesOnly.includes(tree)) prefix = `/node_modules/@types/${getDTName(tree.moduleName).replace("types__", "")}`;
+      const declarationTrees = [
+        ...hasDTS.map((tree) => ({ prefix: `/node_modules/${tree.moduleName}`, tree })),
+        ...dtTreesOnly.map((tree) => ({
+          prefix: `/node_modules/@types/${getDTName(tree.moduleName).replace("types__", "")}`,
+          tree
+        }))
+      ];
+      for (const { prefix, tree } of declarationTrees) {
         const path = prefix + "/package.json";
         const pkgJSON = yield getDTSFileForModuleWithVersion(config, tree.moduleName, tree.version, "/package.json");
         if (typeof pkgJSON == "string") {

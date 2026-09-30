@@ -308,6 +308,7 @@ let acquireTypes: ((source: string) => Promise<number>) | undefined
 let typeAcquisitionQueue = Promise.resolve()
 let typeAcquisitionTimer = 0
 const acquiredTypeFiles = new Map<string, string>()
+const acquiredTypePackages = new Set<string>()
 const pendingAcquiredTypeModels = new Set<string>()
 let examplesPromise: Promise<PlaygroundExamples> | undefined
 let helpPromise: Promise<PlaygroundHelp> | undefined
@@ -943,7 +944,7 @@ function startLanguageServer(module: WebAssembly.Module, libraries: Record<strin
     languageServer = startTsgoLsp({
       configFileName,
       editor: inputEditor,
-      effectiveConfigText: compilerOverrideState.effectiveConfigText,
+      effectiveConfigText: effectiveCompilerConfigText(),
       extraFiles: Object.fromEntries(acquiredTypeFiles),
       libraries,
       models: [...projectModels.values()],
@@ -1342,8 +1343,14 @@ function compilerFileContents() {
     ...Object.fromEntries(acquiredTypeFiles),
     ...projectFileContents(),
   }
-  files[configFileName] = compilerOverrideState.effectiveConfigText
+  files[configFileName] = effectiveCompilerConfigText()
   return files
+}
+
+function effectiveCompilerConfigText() {
+  const configText = compilerOverrideState.effectiveConfigText
+  if (acquiredTypePackages.size === 0 || configOptionNode(configText, "types")) return configText
+  return setCompilerOption(configText, "types", [...acquiredTypePackages].sort())
 }
 
 function refreshCompilerOverrides() {
@@ -1351,7 +1358,7 @@ function refreshCompilerOverrides() {
     projectTextMap(),
     projectModels.get(configFileName)?.getValue() ?? defaultFiles[0].text
   )
-  languageServer?.updateEffectiveConfig(compilerOverrideState.effectiveConfigText)
+  languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
   renderCompilerOverrides()
 }
 
@@ -1746,6 +1753,8 @@ async function refreshTypeAcquisition(initial: boolean) {
       acquireTypes = createTypeAcquisition({
         onFile(fileName, text) {
           acquiredTypeFiles.set(fileName, text)
+          const typePackage = /^\/workspace\/node_modules\/@types\/([^/]+)\/package\.json$/.exec(fileName)?.[1]
+          if (typePackage) acquiredTypePackages.add(typePackage)
           compilerTransport?.setFile(fileName, text)
           if (lspReady) mountAcquiredTypeModel(fileName, text)
           else if (languageServer) pendingAcquiredTypeModels.add(fileName)
@@ -1765,6 +1774,7 @@ async function refreshTypeAcquisition(initial: boolean) {
 
     const addedFiles = await acquireTypes(source)
     typeAcquisitionFailure = undefined
+    languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
     if (addedFiles > 0 && stradaBackend) {
       await compileStradaProject()
     } else if (addedFiles > 0 && useNativeCompiler) {

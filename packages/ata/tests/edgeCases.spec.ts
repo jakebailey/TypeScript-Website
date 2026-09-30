@@ -9,6 +9,11 @@ describe(mapModuleNameToModule, () => {
     expect(mapModuleNameToModule("node:fs")).toEqual("node")
   })
 
+  it("handles subpaths of known Node modules", () => {
+    expect(mapModuleNameToModule("readline/promises")).toEqual("node")
+    expect(mapModuleNameToModule("stream/iter")).toEqual("node")
+  })
+
   it("handles mandatorily-prefixed node: identifiers", () => {
     expect(mapModuleNameToModule("node:test")).toEqual("node")
     expect(mapModuleNameToModule("test")).toEqual("test")
