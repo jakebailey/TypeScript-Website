@@ -14,7 +14,7 @@ index 297e117..30a2649 100644
 +	"scripts": {}
  }
 diff --git a/src/adapters/LspClient.ts b/src/adapters/LspClient.ts
-index 1c5d732..f044638 100644
+index 1c5d732..c98ec21 100644
 --- a/src/adapters/LspClient.ts
 +++ b/src/adapters/LspClient.ts
 @@ -1,4 +1,5 @@
@@ -23,7 +23,7 @@ index 1c5d732..f044638 100644
  import { LspCompletionFeature } from "./languageFeatures/LspCompletionFeature";
  import { LspHoverFeature } from "./languageFeatures/LspHoverFeature";
  import { LspSignatureHelpFeature } from "./languageFeatures/LspSignatureHelpFeature";
-@@ -27,6 +28,11 @@ import { LspCapabilitiesRegistry } from './LspCapabilitiesRegistry';
+@@ -27,22 +28,36 @@ import { LspCapabilitiesRegistry } from './LspCapabilitiesRegistry';
  import { TextDocumentSynchronizer } from "./TextDocumentSynchronizer";
  import { DisposableStore, IDisposable } from "../utils";
  
@@ -34,8 +34,9 @@ index 1c5d732..f044638 100644
 +
  export class MonacoLspClient {
      private _connection: LspConnection;
++    private readonly _diagnosticsFeature: LspDiagnosticsFeature;
      private readonly _capabilitiesRegistry: LspCapabilitiesRegistry;
-@@ -34,13 +40,20 @@ export class MonacoLspClient {
+     private readonly _bridge: TextDocumentSynchronizer;
  
      private _initPromise: Promise<void>;
  
@@ -57,13 +58,27 @@ index 1c5d732..f044638 100644
 +        );
  
          this._connection = new LspConnection(s.server, this._bridge, this._capabilitiesRegistry, c);
++        this._diagnosticsFeature = new LspDiagnosticsFeature(this._connection, this._options.shouldHandleDiagnostics);
          this.createFeatures();
-@@ -83,7 +96,7 @@ export class MonacoLspClient {
+ 
+         this._initPromise = this._init();
+@@ -59,6 +74,10 @@ export class MonacoLspClient {
+         this._capabilitiesRegistry.setServerCapabilities(result.capabilities);
+     }
+ 
++    refreshDiagnostics(): void {
++        this._diagnosticsFeature.refresh();
++    }
++
+     protected createFeatures(): IDisposable {
+         const store = new DisposableStore();
+ 
+@@ -83,7 +102,7 @@ export class MonacoLspClient {
          store.add(new LspSelectionRangeFeature(this._connection));
          store.add(new LspInlayHintsFeature(this._connection));
          store.add(new LspSemanticTokensFeature(this._connection));
 -        store.add(new LspDiagnosticsFeature(this._connection));
-+        store.add(new LspDiagnosticsFeature(this._connection, this._options.shouldHandleDiagnostics));
++        store.add(this._diagnosticsFeature);
  
          return store;
      }
@@ -146,7 +161,7 @@ index bf87f89..3d2257b 100644
      }
  }
 diff --git a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
-index 40e8cad..dc020e3 100644
+index 40e8cad..db11533 100644
 --- a/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
 +++ b/src/adapters/languageFeatures/LspDiagnosticsFeature.ts
 @@ -10,6 +10,7 @@ export class LspDiagnosticsFeature extends Disposable {
@@ -157,7 +172,42 @@ index 40e8cad..dc020e3 100644
  	) {
  		super();
  
-@@ -57,6 +58,10 @@ export class LspDiagnosticsFeature extends Disposable {
+@@ -28,9 +29,22 @@ export class LspDiagnosticsFeature extends Disposable {
+ 					dynamicRegistration: true,
+ 					relatedDocumentSupport: true,
+ 				}
+-			}
++			},
++			workspace: {
++				diagnostics: {
++					refreshSupport: true,
++				},
++			},
+ 		}));
+ 
++		this._register(this._connection.connection.registerRequestHandler(
++			api.client.workspaceDiagnosticRefresh,
++			async () => {
++				this.refresh();
++				return { ok: null };
++			},
++		));
++
+ 		this._register(this._connection.connection.registerNotificationHandler(
+ 			api.client.textDocumentPublishDiagnostics,
+ 			(params) => this._handlePublishDiagnostics(params)
+@@ -52,11 +66,21 @@ export class LspDiagnosticsFeature extends Disposable {
+ 		));
+ 	}
+ 
++	refresh(): void {
++		for (const provider of this._pullDiagnosticProviders.values()) {
++			provider.refresh();
++		}
++	}
++
+ 	private _addPullDiagnosticProvider(
+ 		model: monaco.editor.ITextModel,
  		capability: DiagnosticRegistrationOptions,
  		disposables: DisposableStore
  	): void {
@@ -168,7 +218,7 @@ index 40e8cad..dc020e3 100644
  		// Check if model matches the document selector
  		const languageId = model.getLanguageId();
  
-@@ -68,7 +73,8 @@ export class LspDiagnosticsFeature extends Disposable {
+@@ -68,7 +92,8 @@ export class LspDiagnosticsFeature extends Disposable {
  			model,
  			this._connection,
  			this._diagnosticsMarkerOwner,
@@ -178,7 +228,7 @@ index 40e8cad..dc020e3 100644
  		);
  
  		this._pullDiagnosticProviders.set(model, provider);
-@@ -89,6 +95,9 @@ export class LspDiagnosticsFeature extends Disposable {
+@@ -89,6 +114,9 @@ export class LspDiagnosticsFeature extends Disposable {
  			if (!model || model.isDisposed()) {
  				return;
  			}
@@ -188,7 +238,14 @@ index 40e8cad..dc020e3 100644
  
  			const markers = params.diagnostics.map(diagnostic =>
  				toDiagnosticMarker(diagnostic)
-@@ -114,6 +123,7 @@ class ModelDiagnosticProvider extends Disposable {
+@@ -108,12 +136,14 @@ export class LspDiagnosticsFeature extends Disposable {
+ class ModelDiagnosticProvider extends Disposable {
+ 	private _updateHandle: number | undefined;
+ 	private _previousResultId: string | undefined;
++	private _updateVersion = 0;
+ 
+ 	constructor(
+ 		private readonly _model: monaco.editor.ITextModel,
  		private readonly _connection: LspConnection,
  		private readonly _markerOwner: string,
  		private readonly _capability: DiagnosticRegistrationOptions,
@@ -196,7 +253,38 @@ index 40e8cad..dc020e3 100644
  	) {
  		super();
  		this._register(this._model.onDidChangeContent(() => {
-@@ -185,6 +195,9 @@ class ModelDiagnosticProvider extends Disposable {
+@@ -122,7 +152,13 @@ class ModelDiagnosticProvider extends Disposable {
+ 		this._scheduleDiagnosticUpdate();
+ 	}
+ 
++	refresh(): void {
++		this._previousResultId = undefined;
++		this._scheduleDiagnosticUpdate();
++	}
++
+ 	private _scheduleDiagnosticUpdate(): void {
++		this._updateVersion++;
+ 		if (this._updateHandle !== undefined) {
+ 			clearTimeout(this._updateHandle);
+ 		}
+@@ -137,6 +173,7 @@ class ModelDiagnosticProvider extends Disposable {
+ 		if (this._model.isDisposed()) {
+ 			return;
+ 		}
++		const updateVersion = this._updateVersion;
+ 
+ 		try {
+ 			const translated = this._connection.bridge.translate(this._model, new monaco.Position(1, 1));
+@@ -147,7 +184,7 @@ class ModelDiagnosticProvider extends Disposable {
+ 				previousResultId: this._previousResultId,
+ 			});
+ 
+-			if (this._model.isDisposed()) {
++			if (this._model.isDisposed() || updateVersion !== this._updateVersion) {
+ 				return;
+ 			}
+ 
+@@ -185,6 +222,9 @@ class ModelDiagnosticProvider extends Disposable {
  				if (!model || model.isDisposed()) {
  					continue;
  				}
@@ -206,6 +294,14 @@ index 40e8cad..dc020e3 100644
  
  				if (report.kind === 'full') {
  					const markers = report.items.map((diagnostic: Diagnostic) => toDiagnosticMarker(diagnostic));
+@@ -198,6 +238,7 @@ class ModelDiagnosticProvider extends Disposable {
+ 	}
+ 
+ 	override dispose(): void {
++		this._updateVersion++;
+ 		if (this._updateHandle !== undefined) {
+ 			clearTimeout(this._updateHandle);
+ 			this._updateHandle = undefined;
 diff --git a/src/adapters/languageFeatures/LspHoverFeature.ts b/src/adapters/languageFeatures/LspHoverFeature.ts
 index b77c4fd..04a5aa3 100644
 --- a/src/adapters/languageFeatures/LspHoverFeature.ts

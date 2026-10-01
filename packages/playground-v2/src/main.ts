@@ -960,6 +960,7 @@ function startLanguageServer(module: WebAssembly.Module, libraries: Record<strin
         renderStatus()
       },
       onNavigate: navigateToModel,
+      shouldHandleDiagnostics: model => projectModels.get(model.uri.path) === model,
       onStatus(nextStatus, serverInfo) {
         lspStatus = nextStatus
         lspReady = nextStatus === "ready"
@@ -1808,6 +1809,7 @@ async function refreshTypeAcquisition() {
       : undefined
     for (const error of result.errors) console.error("Could not acquire package types", error)
     languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
+    languageServer?.refreshDiagnostics()
     renderCompilerOverrides()
     await compileActiveProject?.()
     renderStatus()

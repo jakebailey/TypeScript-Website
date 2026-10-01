@@ -38,11 +38,13 @@ type StartTsgoLspOptions = {
   module: WebAssembly.Module
   onError(message: string): void
   onNavigate(fileName: string, range: monaco.Range): void
+  shouldHandleDiagnostics(model: monaco.editor.ITextModel): boolean
   onStatus(status: TsgoStatus, serverInfo?: string): void
 }
 
 export type TsgoLspController = {
   updateEffectiveConfig(text: string): void
+  refreshDiagnostics(): void
 }
 
 class RingBufferWorker {
@@ -118,7 +120,7 @@ class RingBufferWorker {
   }
 
   updateEffectiveConfig(text: string) {
-    if (text === this.#effectiveConfigText) return
+    if (text === this.#effectiveConfigText) return false
     this.#effectiveConfigText = text
     this.postMessage({
       jsonrpc: "2.0",
@@ -131,6 +133,7 @@ class RingBufferWorker {
         },
       },
     })
+    return true
   }
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
@@ -303,13 +306,16 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
   })
 
   const transport = createTransportToWorker(worker as unknown as Worker)
-  new MonacoLspClient(transport, {
-    shouldHandleDiagnostics: model => !isServerOwnedLibraryModel(model),
+  const client = new MonacoLspClient(transport, {
+    shouldHandleDiagnostics: options.shouldHandleDiagnostics,
     shouldSynchronizeModel: model => !isServerOwnedLibraryModel(model),
   })
   return {
     updateEffectiveConfig(text: string) {
-      worker.updateEffectiveConfig(text)
+      if (worker.updateEffectiveConfig(text)) client.refreshDiagnostics()
+    },
+    refreshDiagnostics() {
+      client.refreshDiagnostics()
     },
   } satisfies TsgoLspController
 }

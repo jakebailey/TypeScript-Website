@@ -58,7 +58,9 @@ package/file/response/project byte limits.
 Compiler startup and initial emit do not wait for acquisition.
 Diagnostics may initially report missing package types; the host recompiles
 after applying the current acquisition snapshot. Emit still follows compiler
-options, including `noEmitOnError`. Progress includes pending
+options, including `noEmitOnError`. The host also refreshes LSP diagnostics
+after package files or effective options change, so initial missing-package
+markers disappear without editing the source. Progress includes pending
 package names and completed/total package counts during metadata resolution,
 as well as downloaded/total declaration and metadata file counts.
 Both totals can increase as transitive dependencies are discovered.
