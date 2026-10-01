@@ -46,7 +46,7 @@ const helpIndex = {
     {
       title: "URLs and compatibility",
       legacyIndexes: [9, 10],
-      html: "<p>New projects use the versioned <code>#code/v2/</code> format. The playground also accepts old <code>#code/</code> source links, <code>#src=</code>, compiler-option query parameters, selections, and filename directives.</p><p>Legacy example and handbook hashes are migrated when opened.</p>",
+      html: "<p>The playground is served at <code>/play/</code>. Previous <code>/play/v2/</code>, <code>/play/7/</code>, and <code>/v2/</code> URLs redirect here without changing their query or hash. The legacy playground remains at <code>/oldplay/</code>.</p><p>New projects use the versioned <code>#code/v2/</code> format. Old <code>#code/</code> source links, <code>#src=</code>, compiler-option queries, selections, filename directives, and legacy example and handbook hashes remain supported.</p>",
     },
     {
       title: "Settings",

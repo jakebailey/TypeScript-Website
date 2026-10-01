@@ -3,15 +3,18 @@ import { createHash } from "node:crypto"
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { compatibilityHtml, compatibilityPaths, playgroundPath } from "./routes.mjs"
 
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const websiteDirectory = resolve(packageDirectory, "../..")
 const vendorDirectory = resolve(packageDirectory, "vendor")
 const outputDirectory = resolve(packageDirectory, "dist")
-const websiteStaticDirectory = resolve(websiteDirectory, "packages/typescriptlang-org/static/play/v2")
-const legacyWebsiteStaticDirectory = resolve(websiteDirectory, "packages/typescriptlang-org/static/play/7")
+const websiteStaticDirectory = resolve(websiteDirectory, "packages/typescriptlang-org/static/play")
+const compatibilityDirectories = compatibilityPaths.map(path =>
+  resolve(websiteDirectory, "packages/typescriptlang-org/static", path)
+)
 const serve = process.argv.includes("--serve")
-const playgroundBase = serve ? "/" : process.env.PLAYGROUND_BASE ?? "/play/v2/"
+const playgroundBase = serve ? "/" : process.env.PLAYGROUND_BASE ?? playgroundPath
 
 const wasmFile = resolve(vendorDirectory, "typescript-wasip1-wasm/lib/tsc.wasm")
 const libDirectory = resolve(vendorDirectory, "lib")
@@ -101,22 +104,13 @@ if (serve) {
 } else {
   await buildContext.rebuild()
   await buildContext.dispose()
-  await Promise.all([
-    rm(websiteStaticDirectory, { force: true, recursive: true }),
-    rm(legacyWebsiteStaticDirectory, { force: true, recursive: true }),
-  ])
+  await rm(websiteStaticDirectory, { force: true, recursive: true })
   await cp(outputDirectory, websiteStaticDirectory, { recursive: true })
-  await mkdir(legacyWebsiteStaticDirectory, { recursive: true })
-  await writeFile(
-    resolve(legacyWebsiteStaticDirectory, "index.html"),
-    `<!doctype html>
-<meta charset="utf-8">
-<title>TypeScript Playground v2</title>
-<script>
-  location.replace("/play/v2/" + location.search + location.hash)
-</script>
-<noscript><a href="/play/v2/">Continue to TypeScript Playground v2</a></noscript>
-`
+  await Promise.all(
+    compatibilityDirectories.map(async directory => {
+      await mkdir(directory, { recursive: true })
+      await writeFile(resolve(directory, "index.html"), compatibilityHtml)
+    })
   )
   console.log(`Built TypeScript ${version} playground in ${outputDirectory}`)
 }

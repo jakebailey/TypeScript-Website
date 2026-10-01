@@ -1949,7 +1949,7 @@ async function downloadAsset(name: keyof typeof __LOAD_ASSET_SIZES__, url: URL):
   url.searchParams.set("v", __ASSET_CACHE_VERSION__)
   const request = new Request(url)
   const cache = await getAssetCache()
-  let response = await cache?.match(request)
+  let response = await cachedCompilerAsset(cache, url)
   cachedAssets.set(name, response !== undefined)
   let cacheWrite: Promise<void> | undefined
   if (!response) {
@@ -1992,6 +1992,22 @@ async function downloadAsset(name: keyof typeof __LOAD_ASSET_SIZES__, url: URL):
 function getAssetCache() {
   assetCachePromise ??= openAssetCache()
   return assetCachePromise
+}
+
+async function cachedCompilerAsset(cache: Cache | undefined, url: URL) {
+  if (!cache) return undefined
+  const exact = await cache.match(url)
+  if (exact) return exact
+  const fileName = url.pathname.slice(url.pathname.lastIndexOf("/") + 1)
+  const previous = (await cache.keys()).find(request => {
+    const cachedUrl = new URL(request.url)
+    return (
+      cachedUrl.origin === url.origin &&
+      cachedUrl.pathname.endsWith(`/${fileName}`) &&
+      cachedUrl.searchParams.get("v") === __ASSET_CACHE_VERSION__
+    )
+  })
+  return previous ? cache.match(previous) : undefined
 }
 
 async function confirmLargeDownloadIfNeeded() {
@@ -2048,7 +2064,7 @@ async function compilerAssetsAreCached() {
   const matches = await Promise.all(
     urls.map(url => {
       url.searchParams.set("v", __ASSET_CACHE_VERSION__)
-      return cache.match(new Request(url))
+      return cachedCompilerAsset(cache, url)
     })
   )
   return matches.every(response => response !== undefined)
