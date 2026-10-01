@@ -110,6 +110,7 @@ describe("persistent Twoslash cache", () => {
     const existsSync = fs.existsSync
     const readFileSync = fs.readFileSync
     const writeFileSync = fs.writeFileSync
+    const utimesSync = fs.utimesSync
     const isCache = path =>
       typeof path === "string" &&
       (path.includes(".cache/twoslash") || path.includes(".cache\\twoslash"))
@@ -135,6 +136,9 @@ describe("persistent Twoslash cache", () => {
         if (isCache(path)) files.set(path, data)
         else writeFileSync(path, data, ...args)
       })
+    jest.spyOn(fs, "utimesSync").mockImplementation((path, ...args) => {
+      if (!isCache(path)) return utimesSync(path, ...args)
+    })
     runTwoSlash = jest
       .spyOn(shikiTwoslash, "runTwoSlash")
       .mockImplementation((code, lang, settings) => ({ code, lang, settings }))
@@ -147,6 +151,12 @@ describe("persistent Twoslash cache", () => {
     const second = runTwoSlashOnNode("const value = 1", fence("ts"), {})
     expect(second).toEqual(first)
     expect(runTwoSlash).toHaveBeenCalledTimes(1)
+    expect(fs.utimesSync).toHaveBeenCalledTimes(1)
+    expect(fs.utimesSync).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Date),
+      expect.any(Date)
+    )
   })
 
   it("distinguishes TypeScript from JavaScript", () => {
@@ -175,5 +185,130 @@ describe("persistent Twoslash cache", () => {
     )
     runTwoSlashOnNode("bad code", fence("ts"), {})
     expect(runTwoSlash).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not hide errors recording cache usage", () => {
+    runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    fs.utimesSync.mockImplementationOnce(() => {
+      throw new Error("access time update failed")
+    })
+    expect(() => runTwoSlashOnNode("const value = 1", fence("ts"), {})).toThrow(
+      "access time update failed"
+    )
+  })
+})
+
+describe("Twoslash LRU pruning", () => {
+  const fs = require("fs")
+  const os = require("os")
+  const path = require("path")
+  const {
+    MAX_BYTES,
+    pruneTwoslashCache,
+  } = require("../../../../.github/actions/website-cache/prune-twoslash-cache")
+  let directory
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "website-twoslash-cache-")
+    )
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+    fs.rmSync(directory, { recursive: true, force: true })
+  })
+
+  const entry = (id, bytes, accessed) => {
+    const filename = path.join(
+      directory,
+      id.toString(16).padStart(40, "0") + ".json"
+    )
+    fs.writeFileSync(filename, "")
+    fs.truncateSync(filename, bytes)
+    fs.utimesSync(filename, accessed, accessed)
+    return filename
+  }
+
+  it("keeps an empty or absent cache", () => {
+    const empty = { bytes: 0, removed: 0, removedBytes: 0 }
+    expect(pruneTwoslashCache(directory)).toEqual(empty)
+    expect(pruneTwoslashCache(path.join(directory, "missing"))).toEqual(empty)
+  })
+
+  it("retains exactly 64 MiB without pruning", () => {
+    const file = entry(1, MAX_BYTES, 1)
+    expect(pruneTwoslashCache(directory)).toEqual({
+      bytes: MAX_BYTES,
+      removed: 0,
+      removedBytes: 0,
+    })
+    expect(fs.existsSync(file)).toBe(true)
+  })
+
+  it("evicts least-recently-used entries rather than oldest creations", () => {
+    const oldest = entry(1, MAX_BYTES / 2, 1)
+    const middle = entry(2, MAX_BYTES / 2, 2)
+    const newest = entry(3, MAX_BYTES / 2, 3)
+    fs.utimesSync(oldest, 4, 4)
+    expect(pruneTwoslashCache(directory)).toEqual({
+      bytes: MAX_BYTES,
+      removed: 1,
+      removedBytes: MAX_BYTES / 2,
+    })
+    expect(fs.existsSync(oldest)).toBe(true)
+    expect(fs.existsSync(middle)).toBe(false)
+    expect(fs.existsSync(newest)).toBe(true)
+  })
+
+  it("evicts as many entries as needed and drops oversized entries", () => {
+    const oldest = entry(1, MAX_BYTES, 1)
+    const middle = entry(2, MAX_BYTES, 2)
+    const newest = entry(3, MAX_BYTES + 1, 3)
+    expect(pruneTwoslashCache(directory)).toEqual({
+      bytes: 0,
+      removed: 3,
+      removedBytes: 3 * MAX_BYTES + 1,
+    })
+    expect([oldest, middle, newest].some(file => fs.existsSync(file))).toBe(
+      false
+    )
+  })
+
+  it("breaks timestamp ties deterministically", () => {
+    const first = entry(1, MAX_BYTES / 2, 1)
+    const second = entry(2, MAX_BYTES / 2, 1)
+    const third = entry(3, MAX_BYTES / 2, 1)
+    pruneTwoslashCache(directory)
+    expect(fs.existsSync(first)).toBe(false)
+    expect(fs.existsSync(second)).toBe(true)
+    expect(fs.existsSync(third)).toBe(true)
+  })
+
+  it("preserves usage timestamps across repeated pruning", () => {
+    const first = entry(1, MAX_BYTES / 2, 1)
+    entry(2, MAX_BYTES / 2, 2)
+    pruneTwoslashCache(directory)
+    expect(fs.statSync(first).mtimeMs).toBe(1000)
+    entry(3, MAX_BYTES / 2, 3)
+    pruneTwoslashCache(directory)
+    expect(fs.existsSync(first)).toBe(false)
+  })
+
+  it("rejects unexpected entries instead of deleting unrelated files", () => {
+    const filename = path.join(directory, "unexpected.txt")
+    fs.writeFileSync(filename, "preserve")
+    expect(() => pruneTwoslashCache(directory)).toThrow(
+      "Unexpected Twoslash cache entry"
+    )
+    expect(fs.readFileSync(filename, "utf8")).toBe("preserve")
+  })
+
+  it("surfaces filesystem failures", () => {
+    entry(1, MAX_BYTES + 1, 1)
+    jest.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("cannot prune cache")
+    })
+    expect(() => pruneTwoslashCache(directory)).toThrow("cannot prune cache")
   })
 })
