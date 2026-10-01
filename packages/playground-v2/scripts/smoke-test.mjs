@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFile, readdir } from "node:fs/promises"
 import { resolve } from "node:path"
 import { runInNewContext } from "node:vm"
-import { compatibilityHtml, compatibilityPaths, playgroundPath } from "./routes.mjs"
+import { compatibilityHtml, compatibilityPaths, compatibilityScript, playgroundPath } from "./routes.mjs"
 import { API } from "@typescript/typescript/unstable/sync"
 import { instantiateWasm, WasmTransport, wasmURL } from "@typescript/typescript-wasip1-wasm"
 
@@ -14,12 +14,11 @@ const transport = new WasmTransport({ instance, cwd: "/workspace" })
 const api = new API({ transport })
 
 try {
-  const redirectScript = compatibilityHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1]
-  assert(redirectScript)
+  assert(compatibilityHtml.includes(`<script>\n  ${compatibilityScript}\n</script>`))
   for (const path of compatibilityPaths) {
     const original = new URL(`https://example.test/${path}/?ts=6.0.3&target=99#code/v2/encoded+project`)
     let redirected
-    runInNewContext(redirectScript, {
+    runInNewContext(compatibilityScript, {
       location: {
         search: original.search,
         hash: original.hash,
