@@ -19,6 +19,7 @@ import {
   corsaDiscovery,
   stradaDiscovery,
   type AcquisitionResult,
+  type AcquisitionProgress,
   type DiscoverDependencies,
 } from "./ata"
 import { acquisitionOptions } from "./ata/config"
@@ -309,6 +310,7 @@ let emittedFiles = new Map<string, string>()
 let emitRenderVersion = 0
 let hasShownDiagnostics = false
 let typeAcquisitionFailure: string | undefined
+let typeAcquisitionProgress: AcquisitionProgress | undefined
 const typeAcquirer = new PackageTypeAcquirer()
 let discoverDependencies: DiscoverDependencies | undefined
 let typeAcquisitionController: AbortController | undefined
@@ -893,14 +895,11 @@ async function initializeNativeCompiler() {
       version: __TS_VERSION__,
     })
     discoverDependencies = corsaDiscovery(api)
-    await refreshTypeAcquisition(true)
-    for (const [fileName, text] of acquiredTypeFiles) {
-      transport.setFile(fileName, text)
-    }
     compileActiveProject = () => compileNativeProject(api)
     compilerReady = true
     startLanguageServer(module, libFiles)
     compileNativeProject(api)
+    void refreshTypeAcquisition()
     inputEditor.focus()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -923,7 +922,6 @@ async function initializeStradaCompiler(requestedVersion: string) {
     const classicTS = new Function(`${compilerSource}\nreturn ts;`)()
     window.ts = classicTS
     discoverDependencies = stradaDiscovery(classicTS)
-    await refreshTypeAcquisition(true)
     stradaBackend = await StradaBackend.create({
       baseUrl: `https://playgroundcdn.typescriptlang.org/cdn/${version}/typescript/lib/`,
       compilerSource,
@@ -938,6 +936,7 @@ async function initializeStradaCompiler(requestedVersion: string) {
     lspReady = true
     lspServerInfo = `TypeScript ${version}`
     await compileStradaProject()
+    void refreshTypeAcquisition()
     renderStatus()
     inputEditor.focus()
   } catch (error) {
@@ -1765,20 +1764,25 @@ function compilerOverrideDiagnostics(): Diagnostic[] {
 }
 
 function scheduleTypeAcquisition() {
+  if (!compilerReady || !discoverDependencies) return
   typeAcquisitionController?.abort()
   window.clearTimeout(typeAcquisitionTimer)
-  if (!discoverDependencies) return
+  typeAcquisitionProgress = undefined
+  typeAcquisitionFailure = undefined
+  setStatus("Checking project...", "loading")
   typeAcquisitionTimer = window.setTimeout(() => {
-    void refreshTypeAcquisition(false)
+    void refreshTypeAcquisition()
   }, 900)
 }
 
-async function refreshTypeAcquisition(initial: boolean) {
+async function refreshTypeAcquisition() {
   const discover = discoverDependencies
-  if (!discover) return
+  if (!discover || !compilerReady) return
   typeAcquisitionController?.abort()
   const controller = new AbortController()
   typeAcquisitionController = controller
+  typeAcquisitionFailure = undefined
+  typeAcquisitionProgress = undefined
   try {
     const result = await typeAcquirer.acquire({
       discover,
@@ -1790,14 +1794,14 @@ async function refreshTypeAcquisition(initial: boolean) {
         playgroundSettings.automaticTypeAcquisition
       ),
       signal: controller.signal,
-      onProgress({ downloaded, total }) {
+      onProgress(progress) {
         if (controller.signal.aborted) return
-        const detail = `${downloaded} of ${total} declaration files`
-        if (compilerReady) setStatus(`Loading package types · ${detail}`, "loading")
-        else setLoadingIndeterminate("Loading package types...", detail)
+        typeAcquisitionProgress = progress
+        renderStatus()
       },
     })
     controller.signal.throwIfAborted()
+    typeAcquisitionProgress = undefined
     applyAcquiredTypes(result)
     typeAcquisitionFailure = result.errors.length
       ? result.errors.map(error => `${error.packageName}: ${error.message}`).join("; ")
@@ -1805,10 +1809,11 @@ async function refreshTypeAcquisition(initial: boolean) {
     for (const error of result.errors) console.error("Could not acquire package types", error)
     languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
     renderCompilerOverrides()
-    if (!initial) await compileActiveProject?.()
+    await compileActiveProject?.()
     renderStatus()
   } catch (error) {
     if (controller.signal.aborted) return
+    typeAcquisitionProgress = undefined
     typeAcquisitionFailure = error instanceof Error ? error.message : String(error)
     console.error("Could not acquire package types", error)
     renderStatus()
@@ -2359,6 +2364,7 @@ function setDiagnostics(diagnostics: readonly Diagnostic[]) {
           endColumn: end.column,
           endLineNumber: end.lineNumber,
           message: diagnostic.text,
+          modelVersionId: model.getVersionId(),
           severity: diagnosticSeverity(diagnostic.category),
           source: diagnostic.source || "TS",
           startColumn: start.column,
@@ -2742,6 +2748,14 @@ function renderStatus() {
     inputEditor.layout()
     return
   }
+  if (typeAcquisitionProgress) {
+    const { completedPackages, totalPackages, pendingPackages, downloaded, total } = typeAcquisitionProgress
+    const packages = `${completedPackages}/${totalPackages} packages`
+    const files = total ? ` · ${downloaded}/${total} files` : ""
+    const pending = pendingPackages.length ? ` · ${pendingPackages.join(", ")}` : ""
+    setStatus(`Package types: ${packages}${files}${pending}`, "loading")
+    return
+  }
   const compiler = lspServerInfo ?? __TS_VERSION__
   const diagnostics = `${diagnosticCount} diagnostic${diagnosticCount === 1 ? "" : "s"}`
   setStatus(
@@ -2753,11 +2767,13 @@ function renderStatus() {
 
 function setStatus(message: string, state: "loading" | "ready" | "error") {
   status.textContent = message
+  status.title = message
   status.dataset.state = state
 }
 
 function registerProjectModel(model: monaco.editor.ITextModel) {
   model.onDidChangeContent(() => {
+    stradaCompileVersion++
     persistProjectState()
     refreshCompilerOverrides()
     scheduleTypeAcquisition()

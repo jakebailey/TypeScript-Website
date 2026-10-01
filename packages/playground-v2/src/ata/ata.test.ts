@@ -5,7 +5,7 @@ import { test } from "node:test"
 import { API } from "@typescript/typescript/unstable/sync"
 import { instantiateWasm, WasmTransport } from "@typescript/typescript-wasip1-wasm"
 import { acquisitionOptions } from "./config"
-import { corsaDiscovery, stradaDiscovery, PackageTypeAcquirer, type Dependency } from "./index"
+import { corsaDiscovery, stradaDiscovery, PackageTypeAcquirer, type AcquisitionProgress, type Dependency } from "./index"
 import { packageName, safePackagePath } from "./packages"
 
 const require = createRequire(import.meta.url)
@@ -66,6 +66,8 @@ test("compiler parsers agree on dependencies, references, and version comments",
 /// <reference lib="dom" />
 /// <reference path="./local.d.ts" />
 import { x } from "pkg"; // types: 1.2.3
+import "hereby";
+import "node:url";
 export { y } from "exports";
 import z = require("import-equals");
 const a = import("dynamic");
@@ -81,7 +83,7 @@ declare module "ambient" {}
     const expected: Dependency[] = [
       { kind: "types", specifier: "node" },
       { kind: "import", specifier: "pkg", version: "1.2.3" },
-      ...["exports", "import-equals", "dynamic", "type-import", "required"].map(
+      ...["hereby", "node:url", "exports", "import-equals", "dynamic", "type-import", "required"].map(
         (specifier): Dependency => ({
           kind: "import",
           specifier,
@@ -115,6 +117,64 @@ test("accepts asynchronous compiler discovery adapters", async () => {
   })
   assert.equal(result.packages.length, 1)
   assert.equal(result.errors.length, 0)
+})
+
+test("reports pending metadata, declaration downloads, and cached package completion", async () => {
+  const mock = registry({ pkg: { files: { "/index.d.ts": "export {}", "/extra.d.ts": "export {}" } } })
+  let release!: () => void
+  let started!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const metadataStarted = new Promise<void>(resolve => {
+    started = resolve
+  })
+  const engine = new PackageTypeAcquirer({
+    fetcher: async (input, init) => {
+      if (String(input).includes("/resolve/npm/")) {
+        started()
+        await gate
+      }
+      return mock.fetcher(input, init)
+    },
+  })
+  const progress: AcquisitionProgress[] = []
+  const input = {
+    files: source('import "pkg"'),
+    discover,
+    onProgress: (value: AcquisitionProgress) => progress.push(value),
+  }
+  const acquisition = engine.acquire(input)
+  try {
+    await metadataStarted
+    assert.deepEqual(progress.at(-1), {
+      downloaded: 0,
+      total: 0,
+      completedPackages: 0,
+      totalPackages: 1,
+      pendingPackages: ["pkg"],
+    })
+  } finally {
+    release()
+  }
+  await acquisition
+  assert.deepEqual(progress.at(-1), {
+    downloaded: 2,
+    total: 2,
+    completedPackages: 1,
+    totalPackages: 1,
+    pendingPackages: [],
+  })
+  const calls = mock.calls.length
+  await engine.acquire(input)
+  assert.equal(mock.calls.length, calls)
+  assert.deepEqual(progress.at(-1), {
+    downloaded: 0,
+    total: 0,
+    completedPackages: 1,
+    totalPackages: 1,
+    pendingPackages: [],
+  })
 })
 
 test("downloads declarations and package metadata, never JavaScript", async () => {
@@ -156,13 +216,17 @@ test("falls back to DT with the actual declaration package metadata", async () =
     "@types/plain": { files: { "/index.d.ts": 'declare module "plain" {}' } },
     "@types/scope__pkg": { files: { "/index.d.ts": "export const value: string" } },
   })
+  const progress: AcquisitionProgress[] = []
   const result = await new PackageTypeAcquirer({ fetcher: mock.fetcher }).acquire({
     files: source('import "plain"; import "@scope/pkg"'),
     discover,
+    onProgress: value => progress.push(value),
   })
   assert.deepEqual(result.ambientTypes, ["plain", "scope__pkg"])
   assert(result.files.has("/workspace/node_modules/@types/plain/package.json"))
   assert(!result.files.has("/workspace/node_modules/plain/package.json"))
+  assert.equal(progress.at(-1)?.totalPackages, 2)
+  assert.equal(progress.at(-1)?.completedPackages, 2)
 })
 
 test("Node requests go directly to @types/node and do not recurse into builtins", async () => {
@@ -204,13 +268,18 @@ test("preserves package dependency ranges, deduplicates cycles, and bounds concu
     pkg: { files: { "/index.d.ts": 'export * from "dep"' }, dependencies: { dep: "^2.0.0" } },
     dep: { files: { "/index.d.ts": 'export * from "pkg"' } },
   })
+  const progress: AcquisitionProgress[] = []
   const result = await new PackageTypeAcquirer({ fetcher: mock.fetcher, limits: { concurrency: 2 } }).acquire({
     files: source('import "pkg"'),
     discover,
+    onProgress: value => progress.push(value),
   })
   assert.equal(result.packages.length, 2)
   assert(mock.calls.some(url => url.includes("dep@%5E2.0.0")))
   assert(mock.maximum() <= 2)
+  assert.equal(progress.at(-1)?.completedPackages, 2)
+  assert.equal(progress.at(-1)?.totalPackages, 2)
+  assert.deepEqual(progress.at(-1)?.pendingPackages, [])
 })
 
 test("source version annotations take precedence over an unversioned include", async () => {
@@ -232,12 +301,19 @@ test("isolates package errors, caches successes, and retries failures", async ()
   })
   mock.failures.add("https://cdn.jsdelivr.net/npm/retry@1.0.0/index.d.ts")
   const engine = new PackageTypeAcquirer({ fetcher: mock.fetcher })
-  const input = { files: source('import "good"; import "retry"'), discover }
+  const progress: AcquisitionProgress[] = []
+  const input = {
+    files: source('import "good"; import "retry"'),
+    discover,
+    onProgress: (value: AcquisitionProgress) => progress.push(value),
+  }
   const first = await engine.acquire(input)
   assert.equal(first.errors[0].packageName, "retry")
   assert(first.files.has("/workspace/node_modules/good/index.d.ts"))
   assert(!first.files.has("/workspace/node_modules/retry/index.d.ts"))
   assert(!mock.calls.some(url => url.includes("@types/retry")))
+  assert.equal(progress.at(-1)?.completedPackages, 2)
+  assert.deepEqual(progress.at(-1)?.pendingPackages, [])
   const calls = mock.calls.filter(url => url.includes("good@")).length
   const second = await engine.acquire(input)
   assert.equal(second.errors.length, 0)
@@ -264,9 +340,20 @@ test("queued downloads release their permits when an acquisition is cancelled", 
   const engine = new PackageTypeAcquirer({ fetcher: mock.fetcher, limits: { concurrency: 2 } })
   const controller = new AbortController()
   const input = { files: source('import "one"; import "two"; import "three"; import "four";'), discover }
-  const cancelled = engine.acquire({ ...input, signal: controller.signal })
-  setTimeout(() => controller.abort(), 5)
+  let progressCount = 0
+  let countAtAbort = 0
+  const cancelled = engine.acquire({
+    ...input,
+    signal: controller.signal,
+    onProgress: () => { progressCount++ },
+  })
+  setTimeout(() => {
+    controller.abort()
+    countAtAbort = progressCount
+  }, 5)
   await assert.rejects(cancelled, { name: "AbortError" })
+  assert(progressCount > 0)
+  assert.equal(progressCount, countAtAbort)
   const retried = await engine.acquire(input)
   assert.equal(retried.errors.length, 0)
   assert.equal(retried.packages.length, 4)

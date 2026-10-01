@@ -10,7 +10,14 @@ import type {
   SourceFile,
 } from "./types"
 
-export type { AcquisitionOptions, AcquisitionResult, Dependency, DiscoverDependencies, SourceFile } from "./types"
+export type {
+  AcquisitionOptions,
+  AcquisitionProgress,
+  AcquisitionResult,
+  Dependency,
+  DiscoverDependencies,
+  SourceFile,
+} from "./types"
 export { corsaDiscovery, stradaDiscovery } from "./discovery"
 
 type PackageRequest = { name: string; version: string; requestedBy: string }
@@ -126,12 +133,30 @@ export class PackageTypeAcquirer {
     }
     const queued = new Set<string>()
     const queue: PackageRequest[] = []
+    const pendingPackages = new Set<string>()
+    let completedPackages = 0
+    let totalPackages = 0
+    let downloaded = 0
+    let total = 0
+    const progress = () => {
+      if (!signal.aborted) {
+        input.onProgress?.({
+          downloaded,
+          total,
+          completedPackages,
+          totalPackages,
+          pendingPackages: [...pendingPackages],
+        })
+      }
+    }
     const enqueue = (dependency: Dependency, requestedBy: string, versions?: ReadonlyMap<string, string>) => {
       const name = packageName(dependency.specifier)
       if (!name || excluded.has(name) || excluded.has(definitelyTypedName(name)) || queued.has(name)) return
       if (queued.size >= this.limits.packages) throw new Error(`ATA exceeded its ${this.limits.packages}-package limit`)
       queued.add(name)
       queue.push({ name, requestedBy, version: dependency.version ?? versions?.get(name) ?? "latest" })
+      totalPackages++
+      progress()
     }
     for (const file of [...input.files].sort((a, b) => a.path.localeCompare(b.path))) {
       const dependencies = await input.discover(file)
@@ -141,10 +166,7 @@ export class PackageTypeAcquirer {
     for (const specifier of input.options?.include ?? [])
       enqueue({ kind: "import", specifier }, "typeAcquisition.include")
 
-    let downloaded = 0
-    let total = 0
     let bytes = 0
-    const progress = () => input.onProgress?.({ downloaded, total })
     if (queue.length) progress()
     while (queue.length) {
       signal.throwIfAborted()
@@ -155,6 +177,8 @@ export class PackageTypeAcquirer {
           async (
             request
           ): Promise<{ request: PackageRequest; data: PackageData } | { request: PackageRequest; error: string }> => {
+            pendingPackages.add(request.name)
+            progress()
             try {
               const data = await this.loadPackage(
                 request,
@@ -172,6 +196,10 @@ export class PackageTypeAcquirer {
             } catch (error) {
               signal.throwIfAborted()
               return { request, error: error instanceof Error ? error.message : String(error) }
+            } finally {
+              pendingPackages.delete(request.name)
+              completedPackages++
+              progress()
             }
           }
         )

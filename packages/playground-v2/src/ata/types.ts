@@ -39,4 +39,7 @@ export type AcquisitionResult = {
 export type AcquisitionProgress = {
   downloaded: number
   total: number
+  completedPackages: number
+  totalPackages: number
+  pendingPackages: readonly string[]
 }

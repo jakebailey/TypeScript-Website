@@ -442,45 +442,53 @@ export class StradaBackend {
           },
         }),
         monaco.languages.registerCodeActionProvider(language, {
-          provideCodeActions: async (model, range, context) => {
-            const errorCodes = context.markers
-              .map(marker => Number(String(marker.code ?? "").replace(/^TS/, "")))
-              .filter(Number.isFinite)
-            if (errorCodes.length === 0) return { actions: [], dispose() {} }
+          provideCodeActions: async (model, _range, context, token) => {
+            const empty = { actions: [], dispose() {} }
+            const version = model.getVersionId()
+            const markers = context.markers.filter(marker => marker.modelVersionId === version)
+            if (markers.length === 0) return empty
             await this.updateFiles()
-            const fixes = await this.#request<any[]>("codeFixes", {
-              end: model.getOffsetAt(range.getEndPosition()),
-              errorCodes,
-              fileName: model.uri.path,
-              formatOptions: await this.#formatOptions(model),
-              preferences: {},
-              start: model.getOffsetAt(range.getStartPosition()),
-            })
+            const formatOptions = await this.#formatOptions(model)
             const actions = []
-            for (const fix of fixes) {
-              const edits = []
-              for (const change of fix.changes ?? []) {
-                const target = await this.#ensureModel(change.fileName)
-                if (!target) continue
-                for (const textChange of change.textChanges) {
-                  edits.push({
-                    resource: target.uri,
-                    textEdit: {
-                      range: spanToRange(target, textChange.span),
-                      text: textChange.newText,
-                    },
-                    versionId: target.getVersionId(),
-                  })
-                }
-              }
-              actions.push({
-                diagnostics: context.markers,
-                edit: { edits },
-                isPreferred: fix.fixId !== undefined,
-                kind: "quickfix",
-                title: fix.description,
+            for (const marker of markers) {
+              if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== version) return empty
+              const code = typeof marker.code === "object" ? marker.code.value : marker.code
+              const errorCode = Number(String(code ?? "").replace(/^TS/, ""))
+              if (!Number.isFinite(errorCode)) continue
+              const fixes = await this.#request<any[]>("codeFixes", {
+                end: model.getOffsetAt(new monaco.Position(marker.endLineNumber, marker.endColumn)),
+                errorCodes: [errorCode],
+                fileName: model.uri.path,
+                formatOptions,
+                preferences: {},
+                start: model.getOffsetAt(new monaco.Position(marker.startLineNumber, marker.startColumn)),
               })
+              for (const fix of fixes) {
+                const edits = []
+                for (const change of fix.changes ?? []) {
+                  const target = await this.#ensureModel(change.fileName)
+                  if (!target) continue
+                  for (const textChange of change.textChanges) {
+                    edits.push({
+                      resource: target.uri,
+                      textEdit: {
+                        range: spanToRange(target, textChange.span),
+                        text: textChange.newText,
+                      },
+                      versionId: target.getVersionId(),
+                    })
+                  }
+                }
+                actions.push({
+                  diagnostics: [marker],
+                  edit: { edits },
+                  isPreferred: fix.fixId !== undefined,
+                  kind: "quickfix",
+                  title: fix.description,
+                })
+              }
             }
+            if (token.isCancellationRequested || model.isDisposed() || model.getVersionId() !== version) return empty
             return { actions, dispose() {} }
           },
         }),

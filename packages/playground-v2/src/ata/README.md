@@ -55,6 +55,14 @@ files/indexes use Cache Storage; tags are not persisted as immutable data.
 Downloads use a shared concurrency limit, validate virtual paths, and enforce
 package/file/response/project byte limits.
 
+Compiler startup and initial emit do not wait for acquisition.
+Diagnostics may initially report missing package types; the host recompiles
+after applying the current acquisition snapshot. Emit still follows compiler
+options, including `noEmitOnError`. Progress includes pending
+package names and completed/total package counts during metadata resolution,
+as well as downloaded/total declaration and metadata file counts.
+Both totals can increase as transitive dependencies are discovered.
+
 The browser tests and offline fixtures exercise parser parity, Node imports,
 DefinitelyTyped fallback, version ranges, config policy, cycles, retries,
 partial failures, cancellation, and resource bounds.
