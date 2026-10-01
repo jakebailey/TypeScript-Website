@@ -1,0 +1,19 @@
+name: Cache website build work
+description: Reuse compiled examples and Webpack work without caching generated pages
+
+runs:
+  using: composite
+  steps:
+    - name: Get Node version
+      id: node
+      shell: bash
+      run: echo "version=$(node --version)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: |
+          node_modules/.cache/twoslash
+          packages/typescriptlang-org/.cache/webpack
+        key: website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/action.yml') }}-${{ github.sha }}
+        restore-keys: |
+          website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/action.yml') }}-
