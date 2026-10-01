@@ -67,7 +67,7 @@
   },
   "scripts": {
     "ci:publish": "pnpm changeset git-tag && pnpm publish -r",
-    "bootstrap": "pnpm -r run bootstrap && BOOTSTRAPPING=true pnpm -r run build",
+    "bootstrap": "pnpm -r --filter=!@typescript/ata --filter=!@typescript/vfs --filter=!@typescript/twoslash --filter=!playground-examples --filter=!tsconfig-reference run bootstrap && pnpm build",
     "start": "concurrently -p \"[{name}]\" -n \"BUILD,SITE\" -c \"bgBlue.bold,bgMagenta.bold\" \"node watcher.js\" \"pnpm run --filter=typescriptlang-org start\"",
     "build": "pnpm run --filter=!typescriptlang-org build",
     "build-site": "pnpm run --filter=typescriptlang-org build",
