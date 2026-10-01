@@ -59,6 +59,11 @@ jobs:
       # Run all the package's tests
       - run: pnpm test:ci
 
+      - name: Save website validation caches
+        uses: ./.github/actions/website-cache/save
+        with:
+          key: ${{ steps.website-cache.outputs.key }}-tests
+
       - run: |
           git add .
           if ! git diff --staged --exit-code --quiet; then
