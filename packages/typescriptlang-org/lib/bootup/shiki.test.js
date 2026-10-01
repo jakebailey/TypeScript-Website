@@ -97,3 +97,83 @@ it("bounds the highlighting cache", async () => {
   await plugin({ markdownAST: ast("const value = 0") }, {})
   expect(highlighter.codeToThemedTokens).toHaveBeenCalledTimes(258)
 })
+
+describe("persistent Twoslash cache", () => {
+  const fs = require("fs")
+  const shikiTwoslash = require("shiki-twoslash")
+  const { runTwoSlashOnNode } = jest.requireActual("remark-shiki-twoslash")
+  const fence = lang => ({ lang, meta: { twoslash: true } })
+  let runTwoSlash
+
+  beforeEach(() => {
+    const files = new Map()
+    const existsSync = fs.existsSync
+    const readFileSync = fs.readFileSync
+    const writeFileSync = fs.writeFileSync
+    const isCache = path =>
+      typeof path === "string" &&
+      (path.includes(".cache/twoslash") || path.includes(".cache\\twoslash"))
+    jest
+      .spyOn(fs, "existsSync")
+      .mockImplementation(path =>
+        isCache(path) ? files.has(path) : existsSync(path)
+      )
+    const mkdirSync = fs.mkdirSync
+    jest
+      .spyOn(fs, "mkdirSync")
+      .mockImplementation((path, ...args) =>
+        isCache(path) ? undefined : mkdirSync(path, ...args)
+      )
+    jest
+      .spyOn(fs, "readFileSync")
+      .mockImplementation((path, ...args) =>
+        isCache(path) ? files.get(path) : readFileSync(path, ...args)
+      )
+    jest
+      .spyOn(fs, "writeFileSync")
+      .mockImplementation((path, data, ...args) => {
+        if (isCache(path)) files.set(path, data)
+        else writeFileSync(path, data, ...args)
+      })
+    runTwoSlash = jest
+      .spyOn(shikiTwoslash, "runTwoSlash")
+      .mockImplementation((code, lang, settings) => ({ code, lang, settings }))
+  })
+
+  afterEach(() => jest.restoreAllMocks())
+
+  it("reuses identical semantic inputs", () => {
+    const first = runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    const second = runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    expect(second).toEqual(first)
+    expect(runTwoSlash).toHaveBeenCalledTimes(1)
+  })
+
+  it("distinguishes TypeScript from JavaScript", () => {
+    runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    runTwoSlashOnNode("const value = 1", fence("js"), {})
+    expect(runTwoSlash).toHaveBeenCalledTimes(2)
+  })
+
+  it("invalidates results when compiler or Twoslash options change", () => {
+    runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    runTwoSlashOnNode("const value = 1", fence("ts"), {
+      defaultCompilerOptions: { strict: true },
+    })
+    runTwoSlashOnNode("const value = 1", fence("ts"), {
+      defaultOptions: { noErrors: true },
+    })
+    expect(runTwoSlash).toHaveBeenCalledTimes(3)
+  })
+
+  it("does not save failed compilations", () => {
+    runTwoSlash.mockImplementationOnce(() => {
+      throw new Error("compilation failed")
+    })
+    expect(() => runTwoSlashOnNode("bad code", fence("ts"), {})).toThrow(
+      "compilation failed"
+    )
+    runTwoSlashOnNode("bad code", fence("ts"), {})
+    expect(runTwoSlash).toHaveBeenCalledTimes(2)
+  })
+})
