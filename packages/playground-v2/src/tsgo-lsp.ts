@@ -33,7 +33,6 @@ type StartTsgoLspOptions = {
   configFileName: string
   editor: monaco.editor.IStandaloneCodeEditor
   effectiveConfigText: string
-  extraFiles: Record<string, string>
   libraries: Record<string, string>
   models: readonly monaco.editor.ITextModel[]
   module: WebAssembly.Module
@@ -281,15 +280,14 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
 
   activeEditor = options.editor
   navigateToLocation = options.onNavigate
-  definitionFilesPromise = Promise.resolve({
-    ...Object.fromEntries(
+  definitionFilesPromise = Promise.resolve(
+    Object.fromEntries(
       Object.entries(options.libraries).map(([fileName, text]) => [
         `/typescript/lib/${fileName.slice(fileName.lastIndexOf("/") + 1)}`,
         text,
       ])
-    ),
-    ...options.extraFiles,
-  })
+    )
+  )
   const stdin = new SharedArrayBuffer(headerWords * Int32Array.BYTES_PER_ELEMENT + bufferSize)
   const worker = new RingBufferWorker(stdin, options.configFileName, options.effectiveConfigText)
   let serverInfo: string | undefined
@@ -298,8 +296,8 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
     serverInfo = info
   }
   worker.onError = options.onError
+  // Acquired files are synchronized as open models so closing them can remove them.
   worker.start(stdin, options.module, options.libraries, {
-    ...options.extraFiles,
     ...Object.fromEntries(options.models.map(model => [model.uri.path, model.getValue()])),
     [options.configFileName]: options.effectiveConfigText,
   })

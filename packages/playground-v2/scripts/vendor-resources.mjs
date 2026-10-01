@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -26,7 +26,7 @@ const helpIndex = {
     {
       title: "Package types",
       legacyIndexes: [4],
-      html: "<p>Imports from npm packages automatically acquire bundled declarations or matching <code>@types</code> packages. Downloaded declarations are cached and available to diagnostics, completion, hover, and go-to-definition.</p><p>When <code>compilerOptions.types</code> is not specified, acquired <code>@types</code> packages are added to the effective configuration. TSConfig shows this automatic addition and links to the effective config. Package JavaScript is not downloaded, so <strong>Run</strong> still supports only emitted project files and relative CommonJS imports.</p>",
+      html: "<p>The selected compiler's parser discovers package imports and type references. Automatic acquisition downloads bundled declarations or matching <code>@types</code> packages, caches them, and supplies them to diagnostics, completion, hover, and go-to-definition. Node builtins use <code>@types/node</code>; package JavaScript is never downloaded or executed.</p><p><code>typeAcquisition.enable</code>, <code>include</code>, and <code>exclude</code> control the project. Disabling automatic package types in Playground Settings prevents all acquisition. Removing imports or changing these options removes unneeded acquired files.</p><p>When <code>compilerOptions.types</code> is not specified, acquired <code>@types</code> packages are added to the effective configuration. TSConfig explains this addition and links to the effective config. An explicit <code>types</code> list, including an empty list, is preserved.</p>",
     },
     {
       title: "Editor navigation",
@@ -66,9 +66,7 @@ const examples = await Promise.all(
 )
 
 const vendorDirectory = resolve(packageDirectory, "vendor")
-const ataVendorDirectory = resolve(vendorDirectory, "ata")
 await mkdir(vendorDirectory, { recursive: true })
-await mkdir(ataVendorDirectory, { recursive: true })
 await Promise.all([
   writeFile(
     resolve(vendorDirectory, "examples.json"),
@@ -79,23 +77,6 @@ await Promise.all([
     })}\n`
   ),
   writeFile(resolve(vendorDirectory, "help.json"), `${JSON.stringify(helpIndex)}\n`),
-  cp(resolve(websiteDirectory, "packages/ata/dist/index.js"), resolve(ataVendorDirectory, "index.js")),
-  cp(resolve(websiteDirectory, "packages/ata/dist/src/index.d.ts"), resolve(ataVendorDirectory, "index.d.ts")),
-  cp(resolve(websiteDirectory, "LICENSE-CODE"), resolve(ataVendorDirectory, "LICENSE.txt")),
-  writeFile(
-    resolve(ataVendorDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "@typescript/ata",
-        version: "0.9.8",
-        type: "module",
-        main: "./index.js",
-        types: "./index.d.ts",
-      },
-      undefined,
-      2
-    )}\n`
-  ),
 ])
 
 console.log(`Vendored ${examples.length} playground examples and ${helpIndex.docs.length} help topics`)

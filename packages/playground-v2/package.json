@@ -5,15 +5,14 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --serve",
-    "test": "node scripts/smoke-test.mjs",
-    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test-ata.mjs && node scripts/smoke-test.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "vendor-resources": "node scripts/vendor-resources.mjs",
     "vendor-typescript": "node scripts/vendor-typescript.mjs"
   },
   "dependencies": {
     "@bjorn3/browser_wasi_shim": "^0.4.2",
     "@fontsource/nunito-sans": "^5.2.6",
-    "@typescript/ata": "file:vendor/ata",
     "@typescript/typescript": "file:vendor/typescript",
     "@typescript/typescript-wasip1-wasm": "file:vendor/typescript-wasip1-wasm",
     "@vscode/monaco-lsp-client": "github:microsoft/monaco-editor#13f0c872dcf352815cc28d92dfff496c9839ea5c&path:/monaco-lsp-client",
