@@ -141,7 +141,9 @@ describe("persistent Twoslash cache", () => {
     })
     runTwoSlash = jest
       .spyOn(shikiTwoslash, "runTwoSlash")
-      .mockImplementation((code, lang, settings) => ({ code, lang, settings }))
+      .mockImplementation((code, lang, { tsModule, ...settings }) => ({
+        code, lang, settings,
+      }))
   })
 
   afterEach(() => jest.restoreAllMocks())
@@ -163,6 +165,14 @@ describe("persistent Twoslash cache", () => {
     runTwoSlashOnNode("const value = 1", fence("ts"), {})
     runTwoSlashOnNode("const value = 1", fence("js"), {})
     expect(runTwoSlash).toHaveBeenCalledTimes(2)
+  })
+
+  it("invalidates changed examples without discarding other examples", () => {
+    runTwoSlashOnNode("const value = 1", fence("ts"), {})
+    runTwoSlashOnNode("const other = 1", fence("ts"), {})
+    runTwoSlashOnNode("const value = 2", fence("ts"), {})
+    runTwoSlashOnNode("const other = 1", fence("ts"), {})
+    expect(runTwoSlash).toHaveBeenCalledTimes(3)
   })
 
   it("invalidates results when compiler or Twoslash options change", () => {
@@ -195,6 +205,147 @@ describe("persistent Twoslash cache", () => {
     expect(() => runTwoSlashOnNode("const value = 1", fence("ts"), {})).toThrow(
       "access time update failed"
     )
+  })
+
+  it.each(["runtime", "manifest"])("invalidates changed compiler %s without a version bump", kind => {
+    const freshCache = () => {
+      let cache
+      jest.isolateModules(() => {
+        cache = jest.requireActual("remark-shiki-twoslash/dist/twoslash-cache.js")
+      })
+      return cache
+    }
+    freshCache()("const value = 1", "ts", {}, runTwoSlash)
+    freshCache()("const value = 1", "ts", {}, runTwoSlash)
+    expect(runTwoSlash).toHaveBeenCalledTimes(1)
+    const readFileSync = fs.readFileSync.getMockImplementation()
+    fs.readFileSync.mockImplementation((filename, ...args) => {
+      const contents = readFileSync(filename, ...args)
+      if (typeof filename === "string" && filename.replace(/\\/g, "/").includes("ts-twoslasher/")) {
+        if (kind === "runtime" && filename.endsWith(".js")) {
+          return Buffer.concat([Buffer.from(contents), Buffer.from("\n// compiler rebuild\n")])
+        }
+        if (kind === "manifest" && filename.endsWith("package.json")) {
+          return Buffer.from(JSON.stringify({ ...JSON.parse(contents), main: "./dist/changed-compiler.js" }))
+        }
+      }
+      return contents
+    })
+    freshCache()("const value = 1", "ts", {}, runTwoSlash)
+    expect(runTwoSlash).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { tsModule: { version: "custom compiler" } },
+    { fsMap: new Map() },
+    { customTransformers: { before: [] } },
+    { lzstringModule: { compressToEncodedURIComponent: () => "custom" } },
+  ])("does not reuse non-serializable compiler inputs: %p", settings => {
+    runTwoSlashOnNode("const value = 1", fence("ts"), settings)
+    runTwoSlashOnNode("const value = 1", fence("ts"), settings)
+    expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    expect(fs.writeFileSync).not.toHaveBeenCalled()
+  })
+
+  describe("filesystem inputs", () => {
+    const os = require("os")
+    const path = require("path")
+    let directory
+
+    beforeEach(() => {
+      directory = fs.mkdtempSync(path.join(os.tmpdir(), "website-twoslash-input-"))
+    })
+
+    afterEach(() => fs.rmSync(directory, { recursive: true, force: true }))
+
+    it("invalidates changed declarations", () => {
+      const filename = path.join(directory, "dependency.d.ts")
+      fs.writeFileSync(filename, "export const value: number")
+      runTwoSlash.mockImplementation((code, lang, settings) => ({
+        declaration: settings.tsModule.sys.readFile(filename),
+      }))
+      const first = runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {})).toEqual(first)
+      expect(runTwoSlash).toHaveBeenCalledTimes(1)
+      fs.writeFileSync(filename, "export const value: string")
+      const second = runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      expect(second.declaration).toBe("export const value: string")
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {})).toEqual(second)
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    })
+
+    it("recompiles real imports when their declarations change", () => {
+      runTwoSlash.mockRestore()
+      runTwoSlash = jest.spyOn(shikiTwoslash, "runTwoSlash")
+      const filename = path.join(directory, "dependency.d.ts")
+      const code = 'import { value } from "./dependency"\nconst answer = value\n//    ^?'
+      const settings = { vfsRoot: directory, defaultCompilerOptions: { types: [] } }
+      fs.writeFileSync(filename, "export const value: number")
+      const first = runTwoSlashOnNode(code, fence("ts"), settings)
+      expect(first.queries[0].text).toBe("const answer: number")
+      expect(runTwoSlashOnNode(code, fence("ts"), settings)).toEqual(first)
+      expect(runTwoSlash).toHaveBeenCalledTimes(1)
+      fs.writeFileSync(filename, "export const value: string")
+      const second = runTwoSlashOnNode(code, fence("ts"), settings)
+      expect(second.queries[0].text).toBe("const answer: string")
+      expect(runTwoSlashOnNode(code, fence("ts"), settings)).toEqual(second)
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    })
+
+    it("invalidates missing imports when a file becomes available", () => {
+      const filename = path.join(directory, "dependency.d.ts")
+      runTwoSlash.mockImplementation((code, lang, settings) => ({
+        exists: settings.tsModule.sys.fileExists(filename),
+      }))
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {}).exists).toBe(false)
+      runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      expect(runTwoSlash).toHaveBeenCalledTimes(1)
+      fs.writeFileSync(filename, "export const value: number")
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {}).exists).toBe(true)
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    })
+
+    it("invalidates removed declarations", () => {
+      const filename = path.join(directory, "dependency.d.ts")
+      fs.writeFileSync(filename, "export const value: number")
+      runTwoSlash.mockImplementation((code, lang, settings) => ({
+        declaration: settings.tsModule.sys.readFile(filename),
+      }))
+      runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      fs.unlinkSync(filename)
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {}).declaration).toBeUndefined()
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    })
+
+    it("validates directory listings and preserves omitted arguments", () => {
+      runTwoSlash.mockImplementation((code, lang, settings) => ({
+        files: settings.tsModule.sys.readDirectory(directory, undefined, undefined, ["**/*"])
+          .map(filename => path.resolve(filename)),
+      }))
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {}).files).toEqual([])
+      runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      expect(runTwoSlash).toHaveBeenCalledTimes(1)
+      const filename = path.join(directory, "dependency.d.ts")
+      fs.writeFileSync(filename, "export const value: number")
+      expect(runTwoSlashOnNode("import 'dependency'", fence("ts"), {}).files).toEqual([filename])
+      expect(runTwoSlash).toHaveBeenCalledTimes(2)
+    })
+
+    it("surfaces errors validating dependencies", () => {
+      const filename = path.join(directory, "dependency.d.ts")
+      fs.writeFileSync(filename, "export const value: number")
+      runTwoSlash.mockImplementation((code, lang, settings) => ({
+        declaration: settings.tsModule.sys.readFile(filename),
+      }))
+      runTwoSlashOnNode("import 'dependency'", fence("ts"), {})
+      jest.spyOn(fs, "statSync").mockImplementation(() => {
+        throw new Error("dependency access failed")
+      })
+      expect(() => runTwoSlashOnNode("import 'dependency'", fence("ts"), {})).toThrow(
+        "dependency access failed"
+      )
+    })
   })
 })
 

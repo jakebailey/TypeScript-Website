@@ -20,6 +20,6 @@ runs:
         path: |
           node_modules/.cache/twoslash
           packages/typescriptlang-org/.cache/webpack
-        key: website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+        key: website-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.node.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/**') }}-
+          website-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.node.outputs.version }}-
