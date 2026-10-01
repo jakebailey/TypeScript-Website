@@ -1,5 +1,10 @@
-name: Cache website build work
+name: Restore website build work
 description: Reuse compiled examples and Webpack work without caching generated pages
+
+outputs:
+  key:
+    description: Primary key to use when checkpointing the completed build
+    value: ${{ steps.restore.outputs.cache-primary-key }}
 
 runs:
   using: composite
@@ -9,11 +14,12 @@ runs:
       shell: bash
       run: echo "version=$(node --version)" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+    - uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      id: restore
       with:
         path: |
           node_modules/.cache/twoslash
           packages/typescriptlang-org/.cache/webpack
-        key: website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/action.yml') }}-${{ github.sha }}
+        key: website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
-          website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/action.yml') }}-
+          website-${{ runner.os }}-${{ steps.node.outputs.version }}-${{ hashFiles('pnpm-lock.yaml', 'package.json', 'patches/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'packages/*/src/**', 'packages/*/lib/**', 'packages/*/scripts/**', 'packages/*/script/**', 'packages/*/data/**', 'packages/typescriptlang-org/gatsby-*.js', '.github/actions/website-cache/**') }}-

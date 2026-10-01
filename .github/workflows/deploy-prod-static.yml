@@ -48,6 +48,7 @@ jobs:
         run: pnpm bootstrap
 
       - name: Restore website build caches
+        id: website-cache
         uses: ./.github/actions/website-cache
 
       - name: Set up playground cache busting
@@ -55,6 +56,11 @@ jobs:
 
       - name: Build static site
         run: pnpm build-site
+
+      - name: Save website build caches
+        uses: ./.github/actions/website-cache/save
+        with:
+          key: ${{ steps.website-cache.outputs.key }}
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
