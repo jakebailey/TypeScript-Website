@@ -77,7 +77,9 @@
     "clean": "pnpm run --filter=typescriptlang-org gatsby clean",
     "clean-twoslash": "rm -rf packages/.cache/twoslash",
     "test": "CI=true pnpm -r run test",
-    "test:ci": "CI=true pnpm -r --filter=glossary --filter=tsconfig-reference run lint && CI=true pnpm -r --filter=!root --filter=!glossary --filter=!tsconfig-reference --no-sort run test",
+    "test:ci": "pnpm test:ci:site && pnpm test:ci:packages",
+    "test:ci:site": "CI=true pnpm -r --filter=glossary --filter=tsconfig-reference run lint && CI=true pnpm --filter=typescriptlang-org test",
+    "test:ci:packages": "CI=true pnpm -r --filter=!root --filter=!typescriptlang-org --filter=!glossary --filter=!tsconfig-reference --no-sort run test",
     "update-test-snapshots": "CI=true pnpm run --filter=@typescript/twoslash --filter=@typescript/vfs test -u"
   },
   "repository": "microsoft/TypeScript-Website",
