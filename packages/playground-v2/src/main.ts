@@ -56,6 +56,7 @@ function remapCompilerOverrideDiagnostics(diagnostics: readonly Diagnostic[]) {
       end: matchingOverride.end,
       fileName: matchingOverride.fileName,
       pos: matchingOverride.start,
+      source: "Playground",
     }
   })
 }
@@ -2357,18 +2358,18 @@ function findNodeAtPosition(node: CompilerNode, position: number): CompilerNode 
 function setDiagnostics(diagnostics: readonly Diagnostic[]) {
   for (const [fileName, model] of projectModels) {
     const markers = diagnostics
-      .filter(diagnostic => diagnostic.fileName === fileName)
+      .filter(diagnostic => diagnostic.fileName === fileName && (!useNativeCompiler || diagnostic.source === "Playground"))
       .map(diagnostic => {
         const start = model.getPositionAt(Math.max(0, diagnostic.pos))
         const end = model.getPositionAt(Math.max(diagnostic.pos + 1, diagnostic.end))
         return {
-          code: `TS${diagnostic.code}`,
+          code: String(diagnostic.code),
           endColumn: end.column,
           endLineNumber: end.lineNumber,
           message: diagnostic.text,
           modelVersionId: model.getVersionId(),
           severity: diagnosticSeverity(diagnostic.category),
-          source: diagnostic.source || "TS",
+          source: diagnostic.source || "ts",
           startColumn: start.column,
           startLineNumber: start.lineNumber,
         }
