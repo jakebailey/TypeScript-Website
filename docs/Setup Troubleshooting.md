@@ -2,7 +2,7 @@
 
 #### Module `x` is not built
 
-Sometimes, and it's not been tracked down exactly, some dependencies of the site aren't built even though it says they are. In those cases, re-run `pnpm bootstrap` and `pnpm build` to re-build all the internal site deps.
+Sometimes, and it's not been tracked down exactly, some dependencies of the site aren't built even though it says they are. In those cases, re-run `pnpm bootstrap` to re-build all the internal site deps.
 
 #### Windows + Watchman
 

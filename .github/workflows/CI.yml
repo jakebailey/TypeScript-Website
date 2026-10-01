@@ -36,7 +36,6 @@ jobs:
 
       # Build the packages
       - run: pnpm bootstrap
-      - run: pnpm build
 
       # Verify it compiles
       - run: pnpm build-site

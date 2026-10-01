@@ -44,7 +44,6 @@ jobs:
           pnpm docs-sync pull microsoft/TypeScript-Website-localizations#main 1
           pnpm bootstrap
           pnpm run --filter=typescriptlang-org setup-playground-cache-bust
-          pnpm build
 
       - name: Makes the site
         run: |

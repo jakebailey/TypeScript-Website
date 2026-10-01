@@ -42,6 +42,9 @@ Deployment is automatic:
 
 You can find the build logs in [GitHub Actions](https://github.com/microsoft/TypeScript-Website/actions)
 
+`pnpm bootstrap` already builds the workspace packages; it does not need to be
+followed by `pnpm build`. Run `pnpm build-site` afterward to build the static site.
+
 ## Docs
 
 If you want to know _in-depth_ how this website works, there is an [hour long video covering the codebase, deployment and tooling on YouTube.](https://www.youtube.com/watch?v=HOvivt6B7hE). Otherwise there are some short guides:
