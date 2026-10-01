@@ -57,7 +57,7 @@ jobs:
           path: packages/typescriptlang-org/public
 
       # Run all the package's tests
-      - run: pnpm test
+      - run: pnpm test:ci
 
       - run: |
           git add .
