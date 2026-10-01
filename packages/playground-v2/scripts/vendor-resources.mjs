@@ -31,7 +31,7 @@ const helpIndex = {
     {
       title: "Editor navigation",
       legacyIndexes: [11],
-      html: "<p>Use hover, completion, references, rename, formatting, quick fixes, and <kbd>F12</kbd> go-to-definition as in an editor. Back and Forward return between project and declaration files.</p><p>Place <code>// ^?</code> beneath an expression to display its inferred type.</p>",
+      html: "<p>Use hover, completion, references, rename, formatting, quick fixes, and <kbd>F12</kbd> go-to-definition as in an editor. When viewing a file outside the project explorer, the back arrow returns to your project file and selection.</p><p>Place <code>// ^?</code> beneath an expression to display its inferred type.</p>",
     },
     {
       title: "Emit and Run",

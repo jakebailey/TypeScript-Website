@@ -223,10 +223,11 @@ const resetProjectButton = getElement<HTMLButtonElement>("reset-project-button")
 const applyCompilerOverridesButton = getElement<HTMLButtonElement>("apply-compiler-overrides-button")
 const toggleFilesButton = getElement<HTMLButtonElement>("toggle-files-button")
 const toggleOutputButton = getElement<HTMLButtonElement>("toggle-output-button")
+const showFilesButton = getElement<HTMLButtonElement>("show-files-button")
+const showOutputButton = getElement<HTMLButtonElement>("show-output-button")
 const toggleEmitButton = getElement<HTMLButtonElement>("toggle-emit-button")
 const toggleRunOutputButton = getElement<HTMLButtonElement>("toggle-run-output-button")
 const navigateBackButton = getElement<HTMLButtonElement>("navigate-back-button")
-const navigateForwardButton = getElement<HTMLButtonElement>("navigate-forward-button")
 const currentFile = getElement("current-file")
 const editorHint = getElement("editor-hint")
 const emitOutput = getElement("emit-output")
@@ -277,9 +278,6 @@ const examplesSearch = getElement<HTMLInputElement>("examples-search")
 const examplesList = getElement("examples-list")
 const helpView = getElement("help-view")
 const helpList = getElement("help-list")
-const helpDocument = getElement("help-document")
-const helpBackButton = getElement<HTMLButtonElement>("help-back-button")
-const helpContent = getElement("help-content")
 const clearRunOutput = getElement<HTMLButtonElement>("clear-run-output")
 const runOutput = getElement("run-output")
 const runLog = getElement("run-log")
@@ -405,10 +403,8 @@ type EditorLocation = {
   uri: string
 }
 
-const backLocations: EditorLocation[] = []
-const forwardLocations: EditorLocation[] = []
+let projectReturnLocation: EditorLocation | undefined
 let trackedEditorLocation: EditorLocation | undefined
-let applyingEditorNavigation = false
 const mobileLayout = matchMedia("(max-width: 700px), (max-width: 900px) and (max-height: 600px)")
 const layoutState = loadLayoutState()
 applyLayoutState()
@@ -427,13 +423,12 @@ updateNavigationButtons()
 inputEditor.onDidChangeModel(() => {
   const nextLocation = getEditorLocation()
   if (
-    !applyingEditorNavigation &&
     trackedEditorLocation &&
     nextLocation &&
-    trackedEditorLocation.uri !== nextLocation.uri
+    trackedEditorLocation.uri !== nextLocation.uri &&
+    projectModels.get(monaco.Uri.parse(trackedEditorLocation.uri).path)
   ) {
-    pushEditorLocation(backLocations, trackedEditorLocation)
-    forwardLocations.length = 0
+    projectReturnLocation = trackedEditorLocation
   }
   trackedEditorLocation = nextLocation
   updateActiveFile()
@@ -678,9 +673,11 @@ function applyLayoutState() {
   emitOutput.hidden = !layoutState.emitVisible
   runOutput.dataset.collapsed = String(!layoutState.runVisible)
 
-  toggleFilesButton.textContent = layoutState.filesVisible ? "Hide files" : "Show files"
+  showFilesButton.hidden = layoutState.filesVisible
+  showOutputButton.hidden = layoutState.outputVisible
+  showFilesButton.setAttribute("aria-expanded", String(layoutState.filesVisible))
+  showOutputButton.setAttribute("aria-expanded", String(layoutState.outputVisible))
   toggleFilesButton.setAttribute("aria-expanded", String(layoutState.filesVisible))
-  toggleOutputButton.textContent = layoutState.outputVisible ? "Hide output" : "Show output"
   toggleOutputButton.setAttribute("aria-expanded", String(layoutState.outputVisible))
   toggleEmitButton.textContent = layoutState.emitVisible ? "▾" : "▸"
   toggleEmitButton.title = layoutState.emitVisible ? "Collapse Emit" : "Expand Emit"
@@ -702,6 +699,17 @@ function persistLayoutState() {
   } catch (error) {
     console.warn("Could not save playground layout", error)
   }
+}
+
+function toggleWorkspacePanel(panel: "files" | "output") {
+  if (panel === "files") layoutState.filesVisible = !layoutState.filesVisible
+  else layoutState.outputVisible = !layoutState.outputVisible
+  applyLayoutState()
+  persistLayoutState()
+  const button = panel === "files"
+    ? (layoutState.filesVisible ? toggleFilesButton : showFilesButton)
+    : (layoutState.outputVisible ? toggleOutputButton : showOutputButton)
+  button.focus()
 }
 
 function setupWorkspaceResizer(element: HTMLElement, target: "files" | "output") {
@@ -795,16 +803,10 @@ newFileForm.addEventListener("submit", event => {
 })
 resetProjectButton.addEventListener("click", () => void resetProject())
 applyCompilerOverridesButton.addEventListener("click", applyCompilerOverridesToConfig)
-toggleFilesButton.addEventListener("click", () => {
-  layoutState.filesVisible = !layoutState.filesVisible
-  applyLayoutState()
-  persistLayoutState()
-})
-toggleOutputButton.addEventListener("click", () => {
-  layoutState.outputVisible = !layoutState.outputVisible
-  applyLayoutState()
-  persistLayoutState()
-})
+toggleFilesButton.addEventListener("click", () => toggleWorkspacePanel("files"))
+showFilesButton.addEventListener("click", () => toggleWorkspacePanel("files"))
+toggleOutputButton.addEventListener("click", () => toggleWorkspacePanel("output"))
+showOutputButton.addEventListener("click", () => toggleWorkspacePanel("output"))
 toggleEmitButton.addEventListener("click", () => {
   layoutState.emitVisible = !layoutState.emitVisible
   applyLayoutState()
@@ -816,7 +818,6 @@ toggleRunOutputButton.addEventListener("click", () => {
   persistLayoutState()
 })
 navigateBackButton.addEventListener("click", navigateBack)
-navigateForwardButton.addEventListener("click", navigateForward)
 runButton.addEventListener("click", runProject)
 examplesButton.addEventListener("click", () => void openExamples())
 helpButton.addEventListener("click", () => void openHelp())
@@ -829,7 +830,6 @@ settingsForm.addEventListener("submit", event => {
 })
 resourcesCloseButton.addEventListener("click", () => resourcesDialog.close())
 examplesSearch.addEventListener("input", () => void renderExamples())
-helpBackButton.addEventListener("click", showHelpTopics)
 clearRunOutput.addEventListener("click", () => renderRunLogs([]))
 confirmationCancelButton.addEventListener("click", () => finishConfirmation(false))
 confirmationForm.addEventListener("submit", event => {
@@ -1182,16 +1182,18 @@ async function openHelp() {
   examplesView.hidden = true
   helpView.hidden = false
   resourcesDialog.showModal()
-  showHelpTopics()
   try {
     const help = await getHelp()
     helpList.replaceChildren()
     for (const topic of help.docs) {
-      const button = document.createElement("button")
-      button.type = "button"
-      button.appendChild(createText("strong", topic.title))
-      button.addEventListener("click", () => showHelpDocument(topic))
-      helpList.appendChild(button)
+      const details = document.createElement("details")
+      details.className = "help-topic"
+      details.dataset.title = topic.title
+      details.appendChild(createText("summary", topic.title))
+      const content = document.createElement("article")
+      content.innerHTML = topic.html
+      details.appendChild(content)
+      helpList.appendChild(details)
     }
   } catch (error) {
     helpList.replaceChildren(createText("p", error instanceof Error ? error.message : String(error), "resource-error"))
@@ -1212,18 +1214,13 @@ async function openLegacyResourceRoute(hash: string) {
   if (topic) showHelpDocument(topic)
 }
 
-function showHelpTopics() {
-  resourcesTitle.textContent = "Playground help"
-  helpList.hidden = false
-  helpDocument.hidden = true
-  helpContent.replaceChildren()
-}
-
 function showHelpDocument(topic: PlaygroundHelp["docs"][number]) {
-  helpList.hidden = true
-  helpDocument.hidden = false
-  resourcesTitle.textContent = topic.title
-  helpContent.innerHTML = topic.html
+  const details = [...helpList.querySelectorAll<HTMLDetailsElement>(".help-topic")]
+    .find(element => element.dataset.title === topic.title)
+  if (!details) return
+  details.open = true
+  details.querySelector("summary")?.focus()
+  details.scrollIntoView({ block: "nearest" })
 }
 
 async function loadExample(example: PlaygroundExample) {
@@ -1831,10 +1828,6 @@ function applyAcquiredTypes(result: AcquisitionResult) {
     if (model && inputEditor.getModel() === model) {
       inputEditor.setModel(projectModels.get(entryFileName) ?? [...projectModels.values()][0])
     }
-    if (model) {
-      removeLocationsForUri(backLocations, model.uri.toString())
-      removeLocationsForUri(forwardLocations, model.uri.toString())
-    }
     model?.dispose()
     acquiredTypeModels.delete(fileName)
     pendingAcquiredTypeModels.delete(fileName)
@@ -1869,20 +1862,12 @@ function navigateToModel(fileName: string, range?: monaco.IRange) {
     inputEditor.focus()
     return
   }
-  const currentLocation = getEditorLocation()
-  if (currentLocation) {
-    pushEditorLocation(backLocations, currentLocation)
-    forwardLocations.length = 0
-  }
-  applyingEditorNavigation = true
-  try {
-    inputEditor.setModel(model)
-    if (range) {
-      inputEditor.setSelection(range)
-      inputEditor.revealRangeInCenter(range, monaco.editor.ScrollType.Immediate)
-    }
-  } finally {
-    applyingEditorNavigation = false
+  const current = getEditorLocation()
+  if (current && projectModels.has(monaco.Uri.parse(current.uri).path)) projectReturnLocation = current
+  inputEditor.setModel(model)
+  if (range) {
+    inputEditor.setSelection(range)
+    inputEditor.revealRangeInCenter(range, monaco.editor.ScrollType.Immediate)
   }
   trackedEditorLocation = getEditorLocation()
   updateNavigationButtons()
@@ -1895,59 +1880,26 @@ function getEditorLocation(): EditorLocation | undefined {
   return model && selection ? { selection, uri: model.uri.toString() } : undefined
 }
 
-function pushEditorLocation(stack: EditorLocation[], location: EditorLocation) {
-  const previous = stack.at(-1)
-  if (previous?.uri === location.uri && sameSelection(previous.selection, location.selection)) return
-  stack.push(location)
-}
-
-function sameSelection(left: monaco.Selection, right: monaco.Selection) {
-  return (
-    left.selectionStartLineNumber === right.selectionStartLineNumber &&
-    left.selectionStartColumn === right.selectionStartColumn &&
-    left.positionLineNumber === right.positionLineNumber &&
-    left.positionColumn === right.positionColumn
-  )
-}
-
 function updateNavigationButtons() {
-  navigateBackButton.disabled = backLocations.length === 0
-  navigateForwardButton.disabled = forwardLocations.length === 0
+  const model = inputEditor.getModel()
+  navigateBackButton.hidden = !model || projectModels.get(model.uri.path) === model
 }
 
 function navigateBack() {
-  navigateThroughHistory(backLocations, forwardLocations)
-}
-
-function navigateForward() {
-  navigateThroughHistory(forwardLocations, backLocations)
-}
-
-function navigateThroughHistory(source: EditorLocation[], destination: EditorLocation[]) {
-  let target: EditorLocation | undefined
-  while ((target = source.pop())) {
-    if (monaco.editor.getModel(monaco.Uri.parse(target.uri))) break
+  if (projectReturnLocation && projectModels.has(monaco.Uri.parse(projectReturnLocation.uri).path)) {
+    applyEditorLocation(projectReturnLocation)
+  } else {
+    const model = projectModels.get(entryFileName) ?? [...projectModels.values()][0]
+    if (model) navigateToModel(model.uri.path)
   }
-  if (!target) {
-    updateNavigationButtons()
-    return
-  }
-  const current = getEditorLocation()
-  if (current) pushEditorLocation(destination, current)
-  applyEditorLocation(target)
 }
 
 function applyEditorLocation(location: EditorLocation) {
   const model = monaco.editor.getModel(monaco.Uri.parse(location.uri))
   if (!model) return
-  applyingEditorNavigation = true
-  try {
-    inputEditor.setModel(model)
-    inputEditor.setSelection(location.selection)
-    inputEditor.revealRangeInCenter(location.selection, monaco.editor.ScrollType.Immediate)
-  } finally {
-    applyingEditorNavigation = false
-  }
+  inputEditor.setModel(model)
+  inputEditor.setSelection(location.selection)
+  inputEditor.revealRangeInCenter(location.selection, monaco.editor.ScrollType.Immediate)
   trackedEditorLocation = getEditorLocation()
   updateNavigationButtons()
   inputEditor.focus()
@@ -2859,26 +2811,14 @@ async function deleteProjectFile(fileName: string) {
       remainingFiles.find(candidate => candidate === entryFileName) ??
       remainingFiles.find(candidate => /\.[cm]?[jt]sx?$/i.test(candidate)) ??
       remainingFiles[0]
-    applyingEditorNavigation = true
-    try {
-      inputEditor.setModel(projectModels.get(fallbackFile)!)
-    } finally {
-      applyingEditorNavigation = false
-    }
+    inputEditor.setModel(projectModels.get(fallbackFile)!)
   }
   model.dispose()
-  removeLocationsForUri(backLocations, deletedUri)
-  removeLocationsForUri(forwardLocations, deletedUri)
+  if (projectReturnLocation?.uri === deletedUri) projectReturnLocation = undefined
   trackedEditorLocation = getEditorLocation()
   renderFileList()
   persistProjectState()
   location.reload()
-}
-
-function removeLocationsForUri(locations: EditorLocation[], uri: string) {
-  for (let index = locations.length - 1; index >= 0; index--) {
-    if (locations[index].uri === uri) locations.splice(index, 1)
-  }
 }
 
 async function resetProject() {
