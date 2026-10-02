@@ -14,9 +14,9 @@ import {
 } from "./compiler-overrides"
 import { registerConfigSchema } from "./config-schema"
 import { StradaBackend } from "./strada"
+import { NativeBackend } from "./native"
 import {
   PackageTypeAcquirer,
-  corsaDiscovery,
   stradaDiscovery,
   type AcquisitionResult,
   type AcquisitionProgress,
@@ -59,12 +59,6 @@ function remapCompilerOverrideDiagnostics(diagnostics: readonly Diagnostic[]) {
       source: "Playground",
     }
   })
-}
-
-type CompilerNode = {
-  forEachChild<T>(visitor: (node: CompilerNode) => T): T | undefined
-  getEnd(): number
-  getFullStart(): number
 }
 
 type TypeQuery = {
@@ -304,6 +298,9 @@ let projectFailure: string | undefined
 let compilerTransport: WasmTransport | undefined
 let languageServer: TsgoLspController | undefined
 let stradaBackend: StradaBackend | undefined
+let nativeBackend: NativeBackend | undefined
+let nativeCompileVersion = 0
+const nativeApiFiles = new Map<string, string>()
 let compileActiveProject: (() => Promise<void> | void) | undefined
 let emittedFiles = new Map<string, string>()
 let emitRenderVersion = 0
@@ -318,6 +315,7 @@ const acquiredTypeFiles = new Map<string, string>()
 const acquiredTypePackages = new Set<string>()
 const acquiredTypeModels = new Map<string, monaco.editor.ITextModel>()
 const pendingAcquiredTypeModels = new Set<string>()
+let acquiredTypeMount: Promise<void> | undefined
 let examplesPromise: Promise<PlaygroundExamples> | undefined
 let helpPromise: Promise<PlaygroundHelp> | undefined
 let confirmationResolver: ((value: boolean) => void) | undefined
@@ -895,11 +893,13 @@ async function initializeNativeCompiler() {
       DiagnosticCategory,
       version: __TS_VERSION__,
     })
-    discoverDependencies = corsaDiscovery(api)
-    compileActiveProject = () => compileNativeProject(api)
+    nativeBackend = await NativeBackend.create(module, libFiles)
+    const backend = nativeBackend
+    discoverDependencies = file => backend.discover(file)
+    compileActiveProject = compileNativeProject
     compilerReady = true
     startLanguageServer(module, libFiles)
-    compileNativeProject(api)
+    await compileNativeProject()
     void refreshTypeAcquisition()
     inputEditor.focus()
   } catch (error) {
@@ -966,11 +966,14 @@ function startLanguageServer(module: WebAssembly.Module, libraries: Record<strin
         lspStatus = nextStatus
         lspReady = nextStatus === "ready"
         if (lspReady) {
-          for (const fileName of pendingAcquiredTypeModels) {
-            const text = acquiredTypeFiles.get(fileName)
-            if (text !== undefined) mountAcquiredTypeModel(fileName, text)
-          }
-          pendingAcquiredTypeModels.clear()
+          void mountPendingAcquiredTypeModels().then(
+            () => languageServer?.refreshDiagnostics(),
+            error => {
+              lspFailure = error instanceof Error ? error.message : String(error)
+              console.error("Could not synchronize package types", error)
+              renderStatus()
+            }
+          )
         }
         lspServerInfo = serverInfo ?? lspServerInfo
         const progress = {
@@ -1781,7 +1784,8 @@ async function refreshTypeAcquisition() {
   const controller = new AbortController()
   typeAcquisitionController = controller
   typeAcquisitionFailure = undefined
-  typeAcquisitionProgress = undefined
+  typeAcquisitionProgress = { downloaded: 0, total: 0, completedPackages: 0, totalPackages: 0, pendingPackages: [] }
+  renderStatus()
   try {
     const result = await typeAcquirer.acquire({
       discover,
@@ -1800,16 +1804,26 @@ async function refreshTypeAcquisition() {
       },
     })
     controller.signal.throwIfAborted()
+    const changed = (
+      result.files.size !== acquiredTypeFiles.size ||
+      [...result.files].some(([path, text]) => acquiredTypeFiles.get(path) !== text) ||
+      result.ambientTypes.length !== acquiredTypePackages.size ||
+      result.ambientTypes.some(name => !acquiredTypePackages.has(name))
+    )
+    if (changed) applyAcquiredTypes(result)
+    await mountPendingAcquiredTypeModels()
+    controller.signal.throwIfAborted()
     typeAcquisitionProgress = undefined
-    applyAcquiredTypes(result)
     typeAcquisitionFailure = result.errors.length
       ? result.errors.map(error => `${error.packageName}: ${error.message}`).join("; ")
       : undefined
     for (const error of result.errors) console.error("Could not acquire package types", error)
-    languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
-    languageServer?.refreshDiagnostics()
-    renderCompilerOverrides()
-    await compileActiveProject?.()
+    if (changed) {
+      languageServer?.updateEffectiveConfig(effectiveCompilerConfigText())
+      languageServer?.refreshDiagnostics()
+      renderCompilerOverrides()
+      await compileActiveProject?.()
+    }
     renderStatus()
   } catch (error) {
     if (controller.signal.aborted) return
@@ -1824,6 +1838,7 @@ function applyAcquiredTypes(result: AcquisitionResult) {
   for (const fileName of acquiredTypeFiles.keys()) {
     if (result.files.has(fileName)) continue
     compilerTransport?.removeFile(fileName)
+    nativeApiFiles.delete(fileName)
     const model = acquiredTypeModels.get(fileName)
     if (model && inputEditor.getModel() === model) {
       inputEditor.setModel(projectModels.get(entryFileName) ?? [...projectModels.values()][0])
@@ -1838,10 +1853,31 @@ function applyAcquiredTypes(result: AcquisitionResult) {
   for (const [fileName, text] of result.files) {
     if (projectModels.has(fileName)) continue
     acquiredTypeFiles.set(fileName, text)
-    compilerTransport?.setFile(fileName, text)
-    if (lspReady) mountAcquiredTypeModel(fileName, text)
-    else pendingAcquiredTypeModels.add(fileName)
+    if (nativeApiFiles.get(fileName) !== text) {
+      compilerTransport?.setFile(fileName, text)
+      nativeApiFiles.set(fileName, text)
+    }
+    if (lspReady && acquiredTypeModels.get(fileName)?.getValue() === text) continue
+    pendingAcquiredTypeModels.add(fileName)
   }
+}
+
+function mountPendingAcquiredTypeModels() {
+  if (!lspReady) return Promise.resolve()
+  acquiredTypeMount ??= (async () => {
+    while (lspReady && pendingAcquiredTypeModels.size) {
+      const start = performance.now()
+      do {
+        const fileName = pendingAcquiredTypeModels.values().next().value
+        if (fileName === undefined) break
+        pendingAcquiredTypeModels.delete(fileName)
+        const text = acquiredTypeFiles.get(fileName)
+        if (text !== undefined) mountAcquiredTypeModel(fileName, text)
+      } while (pendingAcquiredTypeModels.size && performance.now() - start < 8)
+      if (pendingAcquiredTypeModels.size) await new Promise<void>(resolve => window.setTimeout(resolve, 0))
+    }
+  })().finally(() => { acquiredTypeMount = undefined })
+  return acquiredTypeMount
 }
 
 function mountAcquiredTypeModel(fileName: string, text: string) {
@@ -2076,74 +2112,48 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
-function compileNativeProject(api: API) {
+async function compileNativeProject() {
+  const backend = nativeBackend
+  if (!backend) return
+  const compileVersion = ++nativeCompileVersion
   setStatus("Checking project...", "loading")
   runButton.disabled = true
 
   try {
     const transport = compilerTransport
     if (!transport) throw new Error("The compiler transport is not initialized")
-    for (const [fileName, text] of Object.entries(compilerFileContents())) {
+    const files = compilerFileContents()
+    for (const [fileName, text] of Object.entries(files)) {
+      if (nativeApiFiles.get(fileName) === text) continue
       transport.setFile(fileName, text)
+      nativeApiFiles.set(fileName, text)
     }
-
-    const config = api.readConfigFile(configFileName)
-    const parsed = api.parseJsonConfigFileContent(config.config, { configFileName })
-    const program = api.createProgram(parsed.fileNames, parsed.options, {
-      projectReferences: parsed.projectReferences,
-      configFileParsingDiagnostics: parsed.errors,
+    const result = await backend.compile({
+      files,
+      configFileName,
+      sourceFiles: [...projectModels]
+        .filter(([, model]) => model.getLanguageId() === "javascript" || model.getLanguageId() === "typescript")
+        .map(([fileName]) => fileName),
     })
-
-    try {
-      const emit = program.emitToString()
-      const diagnostics = deduplicateDiagnostics(
-        remapCompilerOverrideDiagnostics([
-          ...(config.error ? [config.error] : []),
-          ...parsed.errors,
-          ...program.getSyntacticDiagnostics(),
-          ...program.getSemanticDiagnostics(),
-          ...program.getConfigFileParsingDiagnostics(),
-          ...emit.diagnostics,
-          ...compilerOverrideDiagnostics(),
-        ])
-      )
-      diagnosticCount = diagnostics.length
-      setDiagnostics(diagnostics)
-
-      emittedFiles = new Map([...emit.outputFiles].map(([fileName, output]) => [fileName, output.text]))
-      runButton.disabled = ![...emittedFiles.keys()].some(fileName => fileName.endsWith(".js"))
-      void renderEmittedFiles()
-
-      typeQueries.clear()
-      collectProgramTypeQueries(program, parsed.fileNames)
-
-      const configuredFiles = new Set(parsed.fileNames)
-      const orphanSourceFiles = [...projectModels]
-        .filter(
-          ([fileName, model]) =>
-            !configuredFiles.has(fileName) &&
-            (model.getLanguageId() === "javascript" || model.getLanguageId() === "typescript")
-        )
-        .map(([fileName]) => fileName)
-      if (orphanSourceFiles.length > 0) {
-        const inferredProgram = api.createProgram(orphanSourceFiles, {
-          ...parsed.options,
-          allowJs: true,
-        })
-        try {
-          collectProgramTypeQueries(inferredProgram, orphanSourceFiles)
-        } finally {
-          inferredProgram.dispose()
-        }
-      }
-      inlayEmitter.fire()
-      projectFailure = undefined
-      compilerFailure = undefined
-      renderStatus()
-    } finally {
-      program.dispose()
+    if (compileVersion !== nativeCompileVersion) return
+    const diagnostics = deduplicateDiagnostics(
+      remapCompilerOverrideDiagnostics([...result.diagnostics, ...compilerOverrideDiagnostics()])
+    )
+    diagnosticCount = diagnostics.length
+    setDiagnostics(diagnostics)
+    emittedFiles = new Map(Object.entries(result.outputFiles))
+    runButton.disabled = ![...emittedFiles.keys()].some(fileName => fileName.endsWith(".js"))
+    void renderEmittedFiles()
+    typeQueries.clear()
+    for (const [fileName, queries] of Object.entries(result.typeQueries)) {
+      typeQueries.set(monaco.Uri.file(fileName).toString(), queries)
     }
+    inlayEmitter.fire()
+    projectFailure = undefined
+    compilerFailure = undefined
+    renderStatus()
   } catch (error) {
+    if (compileVersion !== nativeCompileVersion) return
     const message = error instanceof Error ? error.message : String(error)
     diagnosticCount = 0
     emittedFiles = new Map()
@@ -2236,16 +2246,6 @@ async function collectStradaTypeQueries(backend: StradaBackend, model: monaco.ed
   typeQueries.set(model.uri.toString(), queries)
 }
 
-function collectProgramTypeQueries(program: ReturnType<API["createProgram"]>, fileNames: readonly string[]) {
-  const checker = program.getProject().checker
-  for (const fileName of fileNames) {
-    const model = projectModels.get(fileName)
-    const sourceFile = program.getSourceFile(fileName)
-    if (!model || !sourceFile) continue
-    typeQueries.set(model.uri.toString(), collectTypeQueries(model.getValue(), sourceFile, checker, model))
-  }
-}
-
 function deduplicateDiagnostics(diagnostics: readonly Diagnostic[]) {
   const seen = new Set<string>()
   return diagnostics.filter(diagnostic => {
@@ -2254,57 +2254,6 @@ function deduplicateDiagnostics(diagnostics: readonly Diagnostic[]) {
     seen.add(key)
     return true
   })
-}
-
-function collectTypeQueries(
-  source: string,
-  sourceFile: CompilerNode,
-  checker: ReturnType<ReturnType<API["createProgram"]>["getProject"]>["checker"],
-  model: monaco.editor.ITextModel
-) {
-  const queryPattern = /^\s*\/\/\s*\^\?\s*$/gm
-  const queries: TypeQuery[] = []
-  let match: RegExpExecArray | null
-
-  while ((match = queryPattern.exec(source))) {
-    const queryEnd = match.index + match[0].lastIndexOf("?")
-    const queryPosition = model.getPositionAt(queryEnd)
-    if (queryPosition.lineNumber === 1) continue
-
-    const inspectedPosition = model.getOffsetAt({
-      lineNumber: queryPosition.lineNumber - 1,
-      column: queryPosition.column,
-    })
-    const node =
-      findNodeAtPosition(sourceFile, inspectedPosition) ??
-      findNodeAtPosition(sourceFile, Math.max(0, inspectedPosition - 1))
-    if (!node) continue
-
-    const type = checker.getTypeAtLocation(node as never)
-    const typeText = checker.typeToString(type, node as never).replace(/\r?\n\s*/g, " ")
-    queries.push({
-      lineNumber: queryPosition.lineNumber,
-      column: queryPosition.column + 1,
-      label: truncate(`: ${typeText}`, 120),
-    })
-  }
-
-  return queries
-}
-
-function findNodeAtPosition(node: CompilerNode, position: number): CompilerNode | undefined {
-  if (position < node.getFullStart() || position > node.getEnd()) return undefined
-
-  let match: CompilerNode | undefined
-  node.forEachChild(child => {
-    const descendant = findNodeAtPosition(child, position)
-    if (descendant) {
-      match = descendant
-      return true
-    }
-    return undefined
-  })
-  return match ?? node
 }
 
 function setDiagnostics(diagnostics: readonly Diagnostic[]) {
@@ -2705,6 +2654,10 @@ function renderStatus() {
   }
   if (typeAcquisitionProgress) {
     const { completedPackages, totalPackages, pendingPackages, downloaded, total } = typeAcquisitionProgress
+    if (totalPackages === 0) {
+      setStatus("Checking package imports...", "loading")
+      return
+    }
     const packages = `${completedPackages}/${totalPackages} packages`
     const files = total ? ` · ${downloaded}/${total} files` : ""
     const pending = pendingPackages.length ? ` · ${pendingPackages.join(", ")}` : ""
@@ -2728,6 +2681,7 @@ function setStatus(message: string, state: "loading" | "ready" | "error") {
 
 function registerProjectModel(model: monaco.editor.ITextModel) {
   model.onDidChangeContent(() => {
+    nativeCompileVersion++
     stradaCompileVersion++
     persistProjectState()
     refreshCompilerOverrides()

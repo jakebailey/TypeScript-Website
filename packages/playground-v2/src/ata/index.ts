@@ -97,6 +97,7 @@ export class PackageTypeAcquirer {
   private readonly packages = new Map<string, { data: PackageData; bytes: number }>()
   private cachedBytes = 0
   private readonly cache = new PackageTypeCache()
+  private readonly discoveries = new WeakMap<DiscoverDependencies, WeakMap<PackageData, Map<string, readonly Dependency[]>>>()
 
   constructor(options: { fetcher?: typeof fetch; limits?: Partial<AcquisitionLimits> } = {}) {
     this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init))
@@ -229,7 +230,22 @@ export class PackageTypeAcquirer {
           }
           files.set(fileName, text)
           if (isDeclaration(path)) {
-            const dependencies = await input.discover({ path: fileName, text })
+            let cachedPackages = this.discoveries.get(input.discover)
+            if (!cachedPackages) {
+              cachedPackages = new WeakMap()
+              this.discoveries.set(input.discover, cachedPackages)
+            }
+            let declarations = cachedPackages.get(data)
+            if (!declarations) {
+              declarations = new Map()
+              cachedPackages.set(data, declarations)
+            }
+            let dependencies = declarations.get(path)
+            if (!dependencies) {
+              dependencies = await input.discover({ path: fileName, text })
+              signal.throwIfAborted()
+              declarations.set(path, dependencies)
+            }
             signal.throwIfAborted()
             for (const dependency of dependencies) {
               enqueue(dependency, `${data.name}@${data.version}${path}`, data.dependencies)

@@ -13,7 +13,8 @@ superseded requests cannot publish stale files.
 
 ## Discovery
 
-Corsa uses `API.createSourceFile` and the compiler's imports and type-reference
+Corsa runs parser-backed discovery in the native compiler worker, using
+`API.createSourceFile` and the compiler's imports and type-reference
 arrays, plus AST traversal for literal `require` calls. Strada traverses the
 selected compiler's parsed AST. Both ignore comments, ordinary strings, local
 path references, and standard-library references. Literal dynamic imports,
@@ -56,6 +57,11 @@ Downloads use a shared concurrency limit, validate virtual paths, and enforce
 package/file/response/project byte limits.
 
 Compiler startup and initial emit do not wait for acquisition.
+Native emit, diagnostics, type queries, and dependency discovery run in a
+dedicated worker, separate from the language-server worker. The synchronous
+`window.ts` API remains available on the page, but automatic editing work does
+not call it. Native snapshots are updated across edits, pending compile
+requests are coalesced, and stale responses cannot replace current results.
 Diagnostics may initially report missing package types; the host recompiles
 after applying the current acquisition snapshot. Emit still follows compiler
 options, including `noEmitOnError`. The host also refreshes LSP diagnostics
@@ -64,6 +70,8 @@ markers disappear without editing the source. Progress includes pending
 package names and completed/total package counts during metadata resolution,
 as well as downloaded/total declaration and metadata file counts.
 Both totals can increase as transitive dependencies are discovered.
+Unchanged declaration packages reuse their discovered dependencies, and an
+unchanged acquisition snapshot does not trigger another compilation.
 
 The browser tests and offline fixtures exercise parser parity, Node imports,
 DefinitelyTyped fallback, version ranges, config policy, cycles, retries,

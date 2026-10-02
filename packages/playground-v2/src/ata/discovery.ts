@@ -1,6 +1,6 @@
 import type { API } from "@typescript/typescript/unstable/sync"
 import { isCallExpression, isIdentifier, isStringLiteral, type Node } from "@typescript/typescript/unstable/ast"
-import type { Dependency, DiscoverDependencies } from "./types"
+import type { Dependency, DiscoverDependencies, SourceFile } from "./types"
 
 function dependency(specifier: string, kind: Dependency["kind"], text: string, end: number): Dependency {
   const lineEnd = text.slice(end).split(/\r?\n/, 1)[0]
@@ -12,7 +12,7 @@ function unique(dependencies: readonly Dependency[]) {
   return [...new Map(dependencies.map(item => [`${item.kind}:${item.specifier}:${item.version ?? ""}`, item])).values()]
 }
 
-export function corsaDiscovery(api: API): DiscoverDependencies {
+export function corsaDiscovery(api: API): (file: SourceFile) => readonly Dependency[] {
   return file => {
     const retained = api.createSourceFile(file.path, file.text)
     try {

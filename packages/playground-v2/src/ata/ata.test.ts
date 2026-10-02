@@ -177,6 +177,27 @@ test("reports pending metadata, declaration downloads, and cached package comple
   })
 })
 
+test("reuses declaration discovery for unchanged packages but not different compilers", async () => {
+  const mock = registry({
+    pkg: { files: { "/index.d.ts": 'export * from "dep"' } },
+    dep: { files: { "/index.d.ts": "export const value: string" } },
+  })
+  const engine = new PackageTypeAcquirer({ fetcher: mock.fetcher })
+  const parsed: string[] = []
+  const parser = async (file: { path: string; text: string }) => {
+    parsed.push(file.path)
+    return discover(file)
+  }
+  const input = { files: source('import "pkg"'), discover: parser }
+  await engine.acquire(input)
+  const declarations = parsed.filter(path => path.includes("/node_modules/")).length
+  assert.equal(declarations, 2)
+  await engine.acquire({ ...input, files: source('import "pkg"; const edited = true;') })
+  assert.equal(parsed.filter(path => path.includes("/node_modules/")).length, declarations)
+  await engine.acquire({ ...input, discover: file => parser(file) })
+  assert.equal(parsed.filter(path => path.includes("/node_modules/")).length, declarations * 2)
+})
+
 test("downloads declarations and package metadata, never JavaScript", async () => {
   const mock = registry({
     pkg: {

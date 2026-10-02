@@ -79,6 +79,7 @@ const buildContext = await context({
     main: resolve(packageDirectory, "src/main.ts"),
     "editor.worker": editorWorker,
     "strada.worker": resolve(packageDirectory, "src/strada.worker.ts"),
+    "native.worker": resolve(packageDirectory, "src/native.worker.ts"),
     "tsgo-lsp.worker": resolve(packageDirectory, "src/tsgo-lsp.worker.ts"),
   },
   format: "esm",
