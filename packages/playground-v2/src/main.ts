@@ -150,6 +150,7 @@ const projectRoot = "/workspace"
 const configFileName = `${projectRoot}/tsconfig.json`
 const entryFileName = `${projectRoot}/src/index.ts`
 const storageKey = "ts7-playground-project"
+const pendingReloadKey = "ts7-playground-pending-reload"
 const projectHashPrefix = "#code/v2/"
 const legacyCodeHashPrefix = "#code/"
 const projectStateVersion = 2
@@ -298,6 +299,10 @@ let languageServer: TsgoLspController | undefined
 let stradaBackend: StradaBackend | undefined
 let nativeBackend: NativeBackend | undefined
 let nativeCompileVersion = 0
+let projectPersistTimer = 0
+let projectPersistenceEnabled = true
+let lastStoredProject: string | undefined
+let lastUrlProject: string | undefined
 let compileActiveProject: (() => Promise<void> | void) | undefined
 let emittedFiles = new Map<string, string>()
 let emitRenderVersion = 0
@@ -431,8 +436,11 @@ inputEditor.onDidChangeModel(() => {
 })
 inputEditor.onDidChangeCursorSelection(() => {
   trackedEditorLocation = getEditorLocation()
-  window.clearTimeout(selectionPersistTimer)
-  selectionPersistTimer = window.setTimeout(persistProjectState, 150)
+  scheduleProjectPersistence()
+})
+window.addEventListener("pagehide", persistProjectState)
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") persistProjectState()
 })
 inputEditor.addAction({
   id: "run-project",
@@ -786,7 +794,6 @@ monaco.languages.registerInlayHintsProvider("json", {
 })
 
 let updateTimer = 0
-let selectionPersistTimer = 0
 for (const model of projectModels.values()) {
   registerProjectModel(model)
 }
@@ -1037,6 +1044,7 @@ function createVersionMenuItem(label: string, value: string, selectedValue: stri
 
 async function selectCompilerVersion(value: string) {
   compilerVersion.open = false
+  persistProjectState()
   const url = new URL(location.href)
   if (value === "native") {
     url.searchParams.delete("ts")
@@ -1239,6 +1247,8 @@ function navigateToExample(example: PlaygroundExample) {
   const state = createExampleProjectState(example)
   const serialized = serializeProjectState(state)
   localStorage.setItem(storageKey, serialized)
+  projectPersistenceEnabled = false
+  window.clearTimeout(projectPersistTimer)
   const url = new URL(location.pathname, location.origin)
   const requestedVersion = typeof settings.ts === "string" ? settings.ts : selectedCompiler
   if (requestedVersion && !isNativeCompilerVersion(requestedVersion)) {
@@ -2647,7 +2657,7 @@ function registerProjectModel(model: monaco.editor.ITextModel) {
   model.onDidChangeContent(() => {
     nativeCompileVersion++
     stradaCompileVersion++
-    persistProjectState()
+    scheduleProjectPersistence()
     refreshCompilerOverrides()
     scheduleTypeAcquisition()
     window.clearTimeout(updateTimer)
@@ -2747,6 +2757,8 @@ async function resetProject() {
     title: "Reset project",
   })
   if (!confirmed) return
+  projectPersistenceEnabled = false
+  window.clearTimeout(projectPersistTimer)
   localStorage.removeItem(storageKey)
   const url = new URL(location.href)
   url.hash = ""
@@ -2754,6 +2766,17 @@ async function resetProject() {
 }
 
 function loadProjectState(): ProjectState {
+  try {
+    const pendingReload = sessionStorage.getItem(pendingReloadKey)
+    sessionStorage.removeItem(pendingReloadKey)
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined
+    if (navigation?.type === "reload" && pendingReload === location.href) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) return normalizeVersionedProjectState(JSON.parse(saved))
+    }
+  } catch (error) {
+    console.warn("Could not restore pending playground edits after reload", error)
+  }
   if (initialLegacyExample) {
     return createExampleProjectState(initialLegacyExample)
   }
@@ -3035,7 +3058,28 @@ function parseLegacyCompilerOption(key: string, rawValue: string) {
   return enumMaps[key]?.[number] ?? number
 }
 
+function scheduleProjectPersistence() {
+  window.clearTimeout(projectPersistTimer)
+  window.addEventListener("beforeunload", flushProjectBeforeUnload)
+  projectPersistTimer = window.setTimeout(persistProjectState, 250)
+}
+
+function flushProjectBeforeUnload() {
+  const previousUrl = location.href
+  persistProjectState()
+  if (!projectPersistenceEnabled) return
+  try {
+    // Reload can capture the old hash before the pending save updates it.
+    sessionStorage.setItem(pendingReloadKey, previousUrl)
+  } catch (error) {
+    console.warn("Could not preserve pending playground edits for reload", error)
+  }
+}
+
 function persistProjectState() {
+  window.clearTimeout(projectPersistTimer)
+  window.removeEventListener("beforeunload", flushProjectBeforeUnload)
+  if (!projectPersistenceEnabled) return
   const activeModel = inputEditor.getModel()
   const selection = activeModel && projectModels.has(activeModel.uri.path) ? inputEditor.getSelection() : undefined
   const state: ProjectState = {
@@ -3052,11 +3096,16 @@ function persistProjectState() {
   }
   try {
     const serialized = serializeProjectState(state)
-    localStorage.setItem(storageKey, serialized)
+    if (serialized !== lastStoredProject) {
+      localStorage.setItem(storageKey, serialized)
+      lastStoredProject = serialized
+    }
     if (!playgroundSettings.saveToUrl) return
+    if (serialized === lastUrlProject) return
     const url = new URL(location.href)
     url.hash = `${projectHashPrefix.slice(1)}${LZString.compressToEncodedURIComponent(serialized)}`
     history.replaceState({}, "", url)
+    lastUrlProject = serialized
   } catch (error) {
     console.warn("Could not save the TypeScript Playground v2 project", error)
   }

@@ -46,7 +46,7 @@ const helpIndex = {
     {
       title: "URLs and compatibility",
       legacyIndexes: [9, 10],
-      html: "<p>The playground is served at <code>/play/</code>. Previous <code>/play/v2/</code>, <code>/play/7/</code>, and <code>/v2/</code> URLs redirect here without changing their query or hash. The legacy playground remains at <code>/oldplay/</code>.</p><p>New projects use the versioned <code>#code/v2/</code> format. Old <code>#code/</code> source links, <code>#src=</code>, compiler-option queries, selections, filename directives, and legacy example and handbook hashes remain supported.</p>",
+      html: "<p>The playground is served at <code>/play/</code>. Previous <code>/play/v2/</code>, <code>/play/7/</code>, and <code>/v2/</code> URLs redirect here without changing their query or hash. The legacy playground remains at <code>/oldplay/</code>.</p><p>New projects use the versioned <code>#code/v2/</code> format. Old <code>#code/</code> source links, <code>#src=</code>, compiler-option queries, selections, filename directives, and legacy example and handbook hashes remain supported.</p><p>Project links and browser storage update after a brief pause in typing or cursor movement. Pending edits are saved when leaving or reloading.</p>",
     },
     {
       title: "Settings",
