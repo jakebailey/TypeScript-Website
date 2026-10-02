@@ -3,6 +3,7 @@ import type { APIMethodInfo, CreateSnapshotParams as CoreCreateSnapshotParams, D
 export type { ConfigFileResponse as ParsedCommandLine, DiagnosticResponse as Diagnostic } from "./proto.generated.ts";
 export type { ProtocolSymbolResponse };
 export * from "./proto.generated.ts";
+export * from "./userPreferences.generated.ts";
 export interface FileSymbolOwner {
     readonly kind: typeof SymbolOwnerKind.File;
     readonly file: SourceFileDescriptor;

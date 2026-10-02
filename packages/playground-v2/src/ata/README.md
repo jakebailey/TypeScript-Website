@@ -21,6 +21,11 @@ path references, and standard-library references. Literal dynamic imports,
 import types, re-exports, and import-equals are supported. Existing
 `// types: VERSION` annotations are preserved.
 
+The native API and reactor host come from the same TypeScript package.
+The matching WASI artifact package supplies the binary and standard libraries;
+its `lib/libFiles.json` index determines which libraries the build includes.
+Configuration schemas are vendored from the compiler package alongside its API.
+
 ## Resolution
 
 - Node builtin imports resolve directly to `@types/node`.

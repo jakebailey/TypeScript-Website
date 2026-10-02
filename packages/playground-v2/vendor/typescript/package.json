@@ -5,11 +5,14 @@
   "type": "module",
   "files": [
     "dist",
+    "schemas",
     "LICENSE.txt",
     "NOTICE.txt"
   ],
   "exports": {
     "./package.json": "./package.json",
+    "./schemas/tsconfig.schema.json": "./schemas/tsconfig.schema.json",
+    "./schemas/jsconfig.schema.json": "./schemas/jsconfig.schema.json",
     "./unstable/sync": {
       "@typescript/source": "./src/api/sync/api.ts",
       "default": "./dist/api/sync/api.js"
@@ -33,6 +36,10 @@
     "./unstable/proto": {
       "@typescript/source": "./src/api/proto.ts",
       "default": "./dist/api/proto.js"
+    },
+    "./unstable/wasm": {
+      "@typescript/source": "./src/wasm/index.ts",
+      "default": "./dist/wasm/index.js"
     },
     "./unstable/ast": {
       "@typescript/source": "./src/ast/index.ts",

@@ -1,6 +1,7 @@
 import { SymbolOwnerKind } from "#enums/symbolOwnerKind";
 import { documentURIToFileName, fileNameToDocumentURI, } from "./path.js";
 export * from "./proto.generated.js";
+export * from "./userPreferences.generated.js";
 export function validateSymbolOwner(owner) {
     switch (owner.kind) {
         case SymbolOwnerKind.File:

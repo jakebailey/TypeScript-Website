@@ -1,12 +1,11 @@
 import assert from "node:assert/strict"
 import { readFile, readdir } from "node:fs/promises"
-import { resolve } from "node:path"
 import { runInNewContext } from "node:vm"
 import { compatibilityHtml, compatibilityPaths, compatibilityScript, playgroundPath } from "./routes.mjs"
 import { API } from "@typescript/typescript/unstable/sync"
-import { instantiateWasm, WasmTransport, wasmURL } from "@typescript/typescript-wasip1-wasm"
+import { instantiateWasm, WasmTransport } from "@typescript/typescript/unstable/wasm"
+import { wasmURL } from "@typescript/typescript-wasip1-wasm"
 
-const packageDirectory = resolve(import.meta.dirname, "..")
 const wasm = await readFile(wasmURL)
 const module = await WebAssembly.compile(wasm)
 const instance = await instantiateWasm(module)
@@ -30,10 +29,14 @@ try {
     assert.equal(redirected, `${playgroundPath}${original.search}${original.hash}`)
   }
 
-  const libDirectory = resolve(packageDirectory, "vendor/lib")
-  const libFileNames = (await readdir(libDirectory)).filter(fileName => /^lib(?:\..+)?\.d\.ts$/.test(fileName))
+  const libListURL = new URL(import.meta.resolve("@typescript/typescript-wasip1-wasm/lib/libFiles.json"))
+  const libFileNames = JSON.parse(await readFile(libListURL, "utf8"))
+  assert.deepEqual(
+    libFileNames,
+    (await readdir(new URL("./", libListURL))).filter(fileName => /^lib(?:\..+)?\.d\.ts$/.test(fileName)).sort()
+  )
   for (const fileName of libFileNames) {
-    transport.setFile(`/${fileName}`, await readFile(resolve(libDirectory, fileName), "utf8"))
+    transport.setFile(`/${fileName}`, await readFile(new URL(fileName, libListURL), "utf8"))
   }
 
   const files = {

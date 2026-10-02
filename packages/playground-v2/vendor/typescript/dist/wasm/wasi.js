@@ -34,7 +34,12 @@ export async function instantiateWasm(module, options = {}) {
     const instance = await WebAssembly.instantiate(module, host.imports);
     return host.initialize(instance);
 }
-/** Synchronously instantiate and initialize the TypeScript reactor with its minimal WASI host. */
+/**
+ * Synchronously instantiate and initialize the TypeScript reactor with its minimal WASI host.
+ *
+ * Prefer `instantiateWasm` on browser main threads, where synchronous
+ * instantiation of large WebAssembly modules may be rejected.
+ */
 export function instantiateWasmSync(module, options = {}) {
     const host = createWasiHost(options);
     const instance = new WebAssembly.Instance(module, host.imports);
@@ -47,6 +52,7 @@ function createWasiHost(options) {
     const decoders = new Map();
     const encoder = new TextEncoder();
     const callbacks = new Map();
+    const closedDescriptors = new Set();
     let fileSystem;
     function getMemory() {
         const memory = instance?.exports.memory;
@@ -84,7 +90,7 @@ function createWasiHost(options) {
     }
     function fdFdstatGet(fd, statPointer) {
         statPointer >>>= 0;
-        if (fd < 0 || fd > 2)
+        if (!isOpenStdioDescriptor(fd))
             return errnoBadFileDescriptor;
         const memory = getMemory();
         new Uint8Array(memory.buffer, statPointer, 24).fill(0);
@@ -95,11 +101,11 @@ function createWasiHost(options) {
         return errnoSuccess;
     }
     function fdFdstatSetFlags(fd, _flags) {
-        return fd >= 0 && fd <= 2 ? errnoSuccess : errnoBadFileDescriptor;
+        return isOpenStdioDescriptor(fd) ? errnoSuccess : errnoBadFileDescriptor;
     }
     function fdRead(fd, _iovsPointer, _iovsLength, readPointer) {
         readPointer >>>= 0;
-        if (fd !== 0)
+        if (fd !== 0 || closedDescriptors.has(fd))
             return errnoBadFileDescriptor;
         getView().setUint32(readPointer, 0, true);
         return errnoSuccess;
@@ -113,7 +119,7 @@ function createWasiHost(options) {
         if (fd === hostCallbackFD) {
             return hostCallback(iovsPointer, iovsLength, writtenPointer);
         }
-        if (fd !== 1 && fd !== 2)
+        if ((fd !== 1 && fd !== 2) || closedDescriptors.has(fd))
             return errnoBadFileDescriptor;
         const memory = getMemory();
         const view = new DataView(memory.buffer);
@@ -133,10 +139,32 @@ function createWasiHost(options) {
             offset += chunk.length;
         }
         view.setUint32(writtenPointer, length, true);
+        if (length === 0)
+            return errnoSuccess;
         const decoder = decoders.get(fd) ?? new TextDecoder();
         decoders.set(fd, decoder);
-        (fd === 1 ? stdout : stderr)(decoder.decode(bytes, { stream: true }));
+        const text = decoder.decode(bytes, { stream: true });
+        if (text) {
+            (fd === 1 ? stdout : stderr)(text);
+        }
         return errnoSuccess;
+    }
+    function fdClose(fd) {
+        if (!isOpenStdioDescriptor(fd))
+            return errnoBadFileDescriptor;
+        closedDescriptors.add(fd);
+        const decoder = decoders.get(fd);
+        if (decoder) {
+            decoders.delete(fd);
+            const text = decoder.decode();
+            if (text) {
+                (fd === 1 ? stdout : stderr)(text);
+            }
+        }
+        return errnoSuccess;
+    }
+    function isOpenStdioDescriptor(fd) {
+        return fd >= 0 && fd <= 2 && !closedDescriptors.has(fd);
     }
     function hostCallback(iovsPointer, iovsLength, writtenPointer) {
         if (iovsLength !== 1)
@@ -170,19 +198,23 @@ function createWasiHost(options) {
             if (result.length > resultCapacity) {
                 throw new Error(`Callback result exceeds ${resultCapacity} bytes`);
             }
-            new Uint8Array(memory.buffer, resultPointer, result.length).set(result);
-            view.setUint32(bufferPointer + 8, result.length, true);
-            view.setUint32(bufferPointer + 12, 0, true);
-            view.setUint32(writtenPointer, bufferLength, true);
+            const resultMemory = getMemory();
+            const resultView = new DataView(resultMemory.buffer);
+            new Uint8Array(resultMemory.buffer, resultPointer, result.length).set(result);
+            resultView.setUint32(bufferPointer + 8, result.length, true);
+            resultView.setUint32(bufferPointer + 12, 0, true);
+            resultView.setUint32(writtenPointer, bufferLength, true);
             return errnoSuccess;
         }
         catch (error) {
             const errorBytes = encoder.encode(error instanceof Error ? error.message : String(error));
             const errorLength = Math.min(errorBytes.length, errorCapacity);
-            new Uint8Array(memory.buffer, errorPointer, errorLength).set(errorBytes.subarray(0, errorLength));
-            view.setUint32(bufferPointer + 8, 0, true);
-            view.setUint32(bufferPointer + 12, errorLength, true);
-            view.setUint32(writtenPointer, 0, true);
+            const errorMemory = getMemory();
+            const errorView = new DataView(errorMemory.buffer);
+            new Uint8Array(errorMemory.buffer, errorPointer, errorLength).set(errorBytes.subarray(0, errorLength));
+            errorView.setUint32(bufferPointer + 8, 0, true);
+            errorView.setUint32(bufferPointer + 12, errorLength, true);
+            errorView.setUint32(writtenPointer, 0, true);
             return errnoIo;
         }
     }
@@ -220,15 +252,17 @@ function createWasiHost(options) {
         const data = decoder.decode(new Uint8Array(memory.buffer, dataPointer, dataLength));
         try {
             fileSystem.writeFile(path, data);
-            view.setUint32(writtenPointer, bufferLength, true);
+            new DataView(getMemory().buffer).setUint32(writtenPointer, bufferLength, true);
             return errnoSuccess;
         }
         catch (error) {
             const errorBytes = encoder.encode(error instanceof Error ? error.message : String(error));
             const errorLength = Math.min(errorBytes.length, errorCapacity);
-            new Uint8Array(memory.buffer, errorPointer, errorLength).set(errorBytes.subarray(0, errorLength));
-            view.setUint32(bufferPointer + 8, errorLength, true);
-            view.setUint32(writtenPointer, 0, true);
+            const errorMemory = getMemory();
+            const errorView = new DataView(errorMemory.buffer);
+            new Uint8Array(errorMemory.buffer, errorPointer, errorLength).set(errorBytes.subarray(0, errorLength));
+            errorView.setUint32(bufferPointer + 8, errorLength, true);
+            errorView.setUint32(writtenPointer, 0, true);
             return errnoIo;
         }
     }
@@ -281,7 +315,7 @@ function createWasiHost(options) {
         clock_time_get: clockTimeGet,
         environ_get: () => errnoSuccess,
         environ_sizes_get: argsSizesGet,
-        fd_close: (fd) => fd >= 0 && fd <= 2 ? errnoSuccess : errnoBadFileDescriptor,
+        fd_close: fdClose,
         fd_fdstat_get: fdFdstatGet,
         fd_fdstat_set_flags: fdFdstatSetFlags,
         fd_filestat_get: unsupported,

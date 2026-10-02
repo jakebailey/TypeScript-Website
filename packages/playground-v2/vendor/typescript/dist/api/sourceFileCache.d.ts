@@ -12,7 +12,11 @@ export interface CachedSourceFile<TSymbol> {
     /** Set of snapshot/project or direct-lease ref keys that reference this entry */
     refs: Set<string>;
     /** Binder symbols owned by this exact source-file incarnation. */
-    readonly symbols: Map<number, TSymbol>;
+    readonly symbolsById: Map<number, TSymbol>;
+    /** Successfully resolved declaration symbols. */
+    readonly symbolsByDeclarationNodeIndex: Map<number, TSymbol>;
+    /** In-flight async declaration symbol lookups. */
+    readonly declarationSymbolRequests: Map<number, Promise<TSymbol>>;
 }
 /**
  * Client-side cache for source files keyed by (path, fileName, scriptKind, parseOptionsKey, contentHash).
@@ -89,7 +93,9 @@ export declare class SourceFileCache<TSymbol> {
     private releaseRef;
     private trackPath;
     /**
-     * Clear all entries from the cache.
+     * Drop local cache ownership without releasing server-side snapshots or leases.
+     * Caller-held ASTs may keep detached records alive; newly cached records need not
+     * preserve object identity with those detached records.
      */
     clear(): void;
     /**

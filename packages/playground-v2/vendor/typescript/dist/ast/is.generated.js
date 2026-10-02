@@ -1108,7 +1108,8 @@ export function isJsxTokenKind(kind) {
 }
 export function isImportPhaseModifierKind(kind) {
     return kind === SyntaxKind.TypeKeyword
-        || kind === SyntaxKind.DeferKeyword;
+        || kind === SyntaxKind.DeferKeyword
+        || kind === SyntaxKind.SourceKeyword;
 }
 export function isPostfixUnaryOperator(kind) {
     return kind === SyntaxKind.PlusPlusToken

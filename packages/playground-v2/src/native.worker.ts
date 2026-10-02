@@ -1,5 +1,5 @@
 import { API } from "@typescript/typescript/unstable/sync"
-import { instantiateWasm, WasmTransport } from "@typescript/typescript-wasip1-wasm"
+import { instantiateWasm, WasmTransport } from "@typescript/typescript/unstable/wasm"
 import type { SourceFile } from "./ata"
 import { NativeCompiler, type NativeCompileInput } from "./native-compiler"
 

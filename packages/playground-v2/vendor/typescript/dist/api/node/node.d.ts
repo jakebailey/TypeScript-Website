@@ -1,10 +1,15 @@
 import { type FileReference, type LineAndCharacter, type MappedDiagnosticDirective, type Node, type Path, SpanMap, SyntaxKind } from "../../ast/index.ts";
+import type { API as AsyncAPI } from "../async/api.ts";
+import type { CachedSourceFile } from "../sourceFileCache.ts";
+import type { API as SyncAPI } from "../sync/api.ts";
 import type { TimingCollector } from "../timing.ts";
 import { RemoteNode, RemoteNodeList } from "./node.generated.ts";
 import { type SourceFileInfo, type TextDecoder } from "./node.infrastructure.ts";
 export { RemoteNode, RemoteNodeList } from "./node.generated.ts";
 export { readParseOptionsKey, readSourceFileHash, readSourceFileLease, readSourceFileNodeId, RemoteNodeBase } from "./node.infrastructure.ts";
 export declare class RemoteSourceFile extends RemoteNode implements SourceFileInfo {
+    readonly api: AsyncAPI<boolean> | SyncAPI<boolean> | undefined;
+    symbolCache: CachedSourceFile<unknown> | undefined;
     readonly nodes: (RemoteNode | RemoteNodeList)[];
     readonly _offsetNodes: number;
     readonly _offsetStringTableOffsets: number;
@@ -26,7 +31,7 @@ export declare class RemoteSourceFile extends RemoteNode implements SourceFileIn
     private _cachedSupplementalSourceFileNames;
     private _cachedDiagnosticDirectives;
     private _diagnosticDirectivesRead;
-    constructor(data: Uint8Array, decoder: TextDecoder, timing?: TimingCollector);
+    constructor(data: Uint8Array, decoder: TextDecoder, timing?: TimingCollector, api?: AsyncAPI<boolean> | SyncAPI<boolean> | undefined);
     /** @internal */
     get contentHash(): string;
     /** @internal */

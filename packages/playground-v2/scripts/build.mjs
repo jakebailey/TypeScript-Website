@@ -1,7 +1,7 @@
 import { context } from "esbuild"
 import { createHash } from "node:crypto"
-import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
-import { basename, dirname, resolve } from "node:path"
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { compatibilityHtml, compatibilityPaths, playgroundPath } from "./routes.mjs"
 
@@ -16,9 +16,9 @@ const compatibilityDirectories = compatibilityPaths.map(path =>
 const serve = process.argv.includes("--serve")
 const playgroundBase = serve ? "/" : process.env.PLAYGROUND_BASE ?? playgroundPath
 
-const wasmFile = resolve(vendorDirectory, "typescript-wasip1-wasm/lib/tsc.wasm")
-const libDirectory = resolve(vendorDirectory, "lib")
-const configSchema = resolve(websiteDirectory, "packages/tsconfig-reference/scripts/schema/result/schema.json")
+const wasmFile = new URL(import.meta.resolve("@typescript/typescript-wasip1-wasm/lib/tsc.wasm"))
+const libListURL = new URL(import.meta.resolve("@typescript/typescript-wasip1-wasm/lib/libFiles.json"))
+const configSchema = new URL(import.meta.resolve("@typescript/typescript/schemas/tsconfig.schema.json"))
 const releaseIndex = resolve(packageDirectory, "vendor/versions.json")
 const examplesIndex = resolve(packageDirectory, "vendor/examples.json")
 const helpIndex = resolve(packageDirectory, "vendor/help.json")
@@ -33,12 +33,12 @@ const indexHtml = (await readFile(resolve(packageDirectory, "src/index.html"), "
 
 await rm(outputDirectory, { force: true, recursive: true })
 await mkdir(outputDirectory, { recursive: true })
-const libFileNames = (await readdir(libDirectory)).filter(fileName => /^lib(?:\..+)?\.d\.ts$/.test(fileName)).sort()
+const libFileNames = JSON.parse(await readFile(libListURL, "utf8"))
 const libFiles = Object.fromEntries(
   await Promise.all(
     libFileNames.map(async fileName => [
-      `/${basename(fileName)}`,
-      await readFile(resolve(libDirectory, fileName), "utf8"),
+      `/${fileName}`,
+      await readFile(new URL(fileName, libListURL), "utf8"),
     ])
   )
 )

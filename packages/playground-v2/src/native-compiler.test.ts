@@ -2,15 +2,16 @@ import assert from "node:assert/strict"
 import { readFile, readdir } from "node:fs/promises"
 import { test } from "node:test"
 import { API } from "@typescript/typescript/unstable/sync"
-import { instantiateWasm, WasmTransport } from "@typescript/typescript-wasip1-wasm"
+import { instantiateWasm, WasmTransport } from "@typescript/typescript/unstable/wasm"
 import { NativeCompiler, type NativeCompileInput } from "./native-compiler"
 
 test("native compiler reuses snapshots across edits, types, and configuration changes", async () => {
   const directory = process.env.PLAYGROUND_DIR!
   const module = await WebAssembly.compile(await readFile(`${directory}/vendor/typescript-wasip1-wasm/lib/tsc.wasm`))
   const transport = new WasmTransport({ instance: await instantiateWasm(module), cwd: "/workspace" })
-  for (const name of await readdir(`${directory}/vendor/lib`)) {
-    if (/^lib(?:\..+)?\.d\.ts$/.test(name)) transport.setFile(`/${name}`, await readFile(`${directory}/vendor/lib/${name}`, "utf8"))
+  const libDirectory = `${directory}/vendor/typescript-wasip1-wasm/lib`
+  for (const name of await readdir(libDirectory)) {
+    if (/^lib(?:\..+)?\.d\.ts$/.test(name)) transport.setFile(`/${name}`, await readFile(`${libDirectory}/${name}`, "utf8"))
   }
   const api = new API({ transport })
   const createProgram = api.createProgram

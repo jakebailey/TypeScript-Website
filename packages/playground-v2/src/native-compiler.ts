@@ -1,6 +1,6 @@
 import { API, type Diagnostic, type FileNotifications, type Snapshot } from "@typescript/typescript/unstable/sync"
 import type { Node } from "@typescript/typescript/unstable/ast"
-import type { WasmTransport } from "@typescript/typescript-wasip1-wasm"
+import type { WasmTransport } from "@typescript/typescript/unstable/wasm"
 import { TextDocument } from "vscode-languageserver-textdocument"
 import { corsaDiscovery, type Dependency, type SourceFile } from "./ata"
 

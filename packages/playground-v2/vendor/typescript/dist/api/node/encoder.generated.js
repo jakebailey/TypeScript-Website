@@ -60,7 +60,7 @@ export function getNodeCommonData(node) {
         case SyntaxKind.ImportType:
             return (node.isTypeOf ? 1 : 0) << 24;
         case SyntaxKind.ImportClause:
-            return (node.phaseModifier === SyntaxKind.TypeKeyword ? 1 : node.phaseModifier === SyntaxKind.DeferKeyword ? 2 : 0) << 24;
+            return (node.phaseModifier === SyntaxKind.TypeKeyword ? 1 : node.phaseModifier === SyntaxKind.DeferKeyword ? 2 : node.phaseModifier === SyntaxKind.SourceKeyword ? 3 : 0) << 24;
         case SyntaxKind.ImportSpecifier:
             return (node.isTypeOnly ? 1 : 0) << 24;
         case SyntaxKind.JSDocTypeLiteral:

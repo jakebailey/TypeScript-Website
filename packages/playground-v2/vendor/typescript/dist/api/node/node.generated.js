@@ -505,7 +505,7 @@ export class RemoteNode extends RemoteNodeBase {
                 const idx = (this.data >> 24) & 0x3;
                 if (idx === 0)
                     return undefined;
-                return idx === 1 ? SyntaxKind.TypeKeyword : idx === 2 ? SyntaxKind.DeferKeyword : undefined;
+                return idx === 1 ? SyntaxKind.TypeKeyword : idx === 2 ? SyntaxKind.DeferKeyword : idx === 3 ? SyntaxKind.SourceKeyword : undefined;
             }
         }
     }

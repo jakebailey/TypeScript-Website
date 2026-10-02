@@ -21,14 +21,14 @@ import { TypePredicateKind } from "#enums/typePredicateKind";
 import { type __String, type CallLikeExpression, type Declaration, type Expression, type FileReference, type Identifier, ModifierFlags, type NamedTupleMember, type Node, type ParameterDeclaration, type Path, type SourceFile, type StringLiteralLikeNode, type SyntaxKind, type TypeNode } from "../../ast/index.ts";
 import type { APIOptions, // @sync:     SyncAPIOptions as APIOptions,
 LSPConnectionOptions } from "../options.ts";
-import type { BuildResponse, CleanBuildResponse, CompactSymbolReference, CompilerOptions, ConfiguredProjectId, CreateBuildOrchestratorResponse, CreateProgramOptions as ProtocolCreateProgramOptions, CreateSnapshotParams as ProtocolCreateSnapshotParams, CreateSnapshotProgramParams as ProtocolCreateSnapshotProgramParams, CreateSnapshotResponse, CreateSourceFileOptions, Diagnostic, DocumentIdentifier, DocumentPosition, FileNotifications, InferredProjectId, LanguageServerSnapshotChanges as ProtocolLanguageServerSnapshotChanges, ModuleResolutionEntry, ModuleResolutionSpec, PackageId, ParsedCommandLine, ProjectId, ProjectReference, ProjectResponse, ProtocolSymbolResponse, ReadConfigFileResponse, ReconfigureSnapshotProgramParams as ProtocolReconfigureSnapshotProgramParams, ResolutionMode, ResolvedModule, ResolvedTypeReferenceDirective, ResolveModuleNameResult, SignaturePropertyMethod, SignatureResponse, SourceFileMetadata, StaticModuleResolution, SymbolPropertyMethod, SymbolReference, SymbolResponse, SymbolsPropertyMethod, SyntheticProjectId, TextEdit, TypeAcquisition, TypePropertyMethod, TypeResponse, TypesPropertyMethod } from "../proto.ts";
+import type { BuildResponse, CleanBuildResponse, CompactSymbolReference, CompilerOptions, CompletionPreferences, ConfiguredProjectId, CreateBuildOrchestratorResponse, CreateProgramOptions as ProtocolCreateProgramOptions, CreateSnapshotParams as ProtocolCreateSnapshotParams, CreateSnapshotProgramParams as ProtocolCreateSnapshotProgramParams, CreateSnapshotResponse, CreateSourceFileOptions, Diagnostic, DocumentIdentifier, DocumentPosition, FileNotifications, InferredProjectId, LanguageServerSnapshotChanges as ProtocolLanguageServerSnapshotChanges, ModuleResolutionEntry, ModuleResolutionSpec, PackageId, ParsedCommandLine, ProjectId, ProjectReference, ProjectResponse, ProtocolSymbolResponse, ReadConfigFileResponse, ReconfigureSnapshotProgramParams as ProtocolReconfigureSnapshotProgramParams, ResolutionMode, ResolvedModule, ResolvedTypeReferenceDirective, ResolveModuleNameResult, SignaturePropertyMethod, SignatureResponse, SourceFileMetadata, StaticModuleResolution, SymbolPropertyMethod, SymbolReference, SymbolResponse, SymbolsPropertyMethod, SyntheticProjectId, TextEdit, TypeAcquisition, TypePropertyMethod, TypeResponse, TypesPropertyMethod, UserPreferences } from "../proto.ts";
 import { type CachedSourceFile, SourceFileCache } from "../sourceFileCache.ts";
 import type { RequestTiming, TimingAccumulators, TimingInfo } from "../timing.ts";
 import type { AssertsIdentifierTypePredicate, AssertsThisTypePredicate, BigIntLiteralType, BooleanLiteralType, CompletionEntry, CompletionInfo, CompletionOptions, ConditionalType, EmitOutput, EmitOutputFile, EmitResult, FormatDiagnosticsHost, FreshableType, GenericType, GetImportEditsForSymbolsOptions, IdentifierTypePredicate, ImportAdderAction as APIImportAdderAction, IndexedAccessType, IndexInfo, IndexType, InterfaceType, IntersectionType, IntrinsicType, JSDocTagInfo, LiteralType, MappedType, NumberLiteralType, ObjectType, StringLiteralType, StringMappingType, StructuredType, SubstitutionType, TemplateLiteralType, ThisTypePredicate, TupleType, TupleTypeReference, Type, TypeParameter, TypePredicate, TypePredicateBase, TypeReference, UnionOrIntersectionType, UnionType } from "./types.ts";
 export { formatDiagnostics, formatDiagnosticsWithColorAndContext } from "../diagnosticFormatter.ts";
 export { documentURIToFileName, fileNameToDocumentURI } from "../path.ts";
 export { CheckFlags, CompletionItemKind, DiagnosticCategory, ElementFlags, EmitOnly, IndexKind, JsxEmit, ModifierFlags, ModuleKind, ModuleResolutionKind, NodeBuilderFlags, ObjectFlags, ScriptKind, SignatureFlags, SignatureKind, SymbolFlags, SymbolOwnerKind, TypeFlags, TypeFormatFlags, TypePredicateKind };
-export type { APIImportAdderAction as ImportAdderAction, APIOptions, AssertsIdentifierTypePredicate, AssertsThisTypePredicate, BigIntLiteralType, BooleanLiteralType, ClientSocketOptions, ClientSpawnOptions, CompilerOptions, CompletionEntry, CompletionInfo, CompletionOptions, ConditionalType, ConfiguredProjectId, CreateSourceFileOptions, Diagnostic, DocumentIdentifier, DocumentPosition, EmitOutput, EmitOutputFile, EmitResult, FileNotifications, FormatDiagnosticsHost, FreshableType, GenericType, GetImportEditsForSymbolsOptions, IdentifierTypePredicate, IndexedAccessType, IndexInfo, IndexType, InferredProjectId, InterfaceType, IntersectionType, IntrinsicType, JSDocTagInfo, LiteralType, LSPConnectionOptions, MappedType, ModuleResolutionEntry, ModuleResolutionSpec, NumberLiteralType, ObjectType, PackageId, ParsedCommandLine, ProjectId, ProjectReference, ReadConfigFileResponse, RequestTiming, ResolutionMode, ResolvedModule, ResolvedTypeReferenceDirective, ResolveModuleNameResult, SourceFileMetadata, StaticModuleResolution, StringLiteralType, StringMappingType, StructuredType, SubstitutionType, SyntheticProjectId, TemplateLiteralType, TextEdit, ThisTypePredicate, TimingAccumulators, TimingInfo, TupleType, TupleTypeReference, Type, TypeAcquisition, TypeParameter, TypePredicate, TypePredicateBase, TypeReference, UnionOrIntersectionType, UnionType, };
+export type { APIImportAdderAction as ImportAdderAction, APIOptions, AssertsIdentifierTypePredicate, AssertsThisTypePredicate, BigIntLiteralType, BooleanLiteralType, ClientSocketOptions, ClientSpawnOptions, CompilerOptions, CompletionEntry, CompletionInfo, CompletionOptions, CompletionPreferences, ConditionalType, ConfiguredProjectId, CreateSourceFileOptions, Diagnostic, DocumentIdentifier, DocumentPosition, EmitOutput, EmitOutputFile, EmitResult, FileNotifications, FormatDiagnosticsHost, FreshableType, GenericType, GetImportEditsForSymbolsOptions, IdentifierTypePredicate, IndexedAccessType, IndexInfo, IndexType, InferredProjectId, InterfaceType, IntersectionType, IntrinsicType, JSDocTagInfo, LiteralType, LSPConnectionOptions, MappedType, ModuleResolutionEntry, ModuleResolutionSpec, NumberLiteralType, ObjectType, PackageId, ParsedCommandLine, ProjectId, ProjectReference, ReadConfigFileResponse, RequestTiming, ResolutionMode, ResolvedModule, ResolvedTypeReferenceDirective, ResolveModuleNameResult, SourceFileMetadata, StaticModuleResolution, StringLiteralType, StringMappingType, StructuredType, SubstitutionType, SyntheticProjectId, TemplateLiteralType, TextEdit, ThisTypePredicate, TimingAccumulators, TimingInfo, TupleType, TupleTypeReference, Type, TypeAcquisition, TypeParameter, TypePredicate, TypePredicateBase, TypeReference, UnionOrIntersectionType, UnionType, UserPreferences, };
 export interface ModuleResolverOptions {
     moduleResolutions?: ModuleResolutionSpec | undefined;
     resolveModuleName?: ResolveModuleNameCallback | undefined;
@@ -69,8 +69,10 @@ export interface TranspileOutput {
     sourceMapText?: string | undefined;
 }
 export declare class API<FromLSP extends boolean = false> implements FormatDiagnosticsHost {
-    private client;
-    private sourceFileCache;
+    /** @internal */
+    readonly client: Client;
+    /** @internal */
+    readonly sourceFileCache: SourceFileCache<Symbol>;
     private toPath;
     private currentDirectory;
     private readonly decoder;
@@ -83,6 +85,11 @@ export declare class API<FromLSP extends boolean = false> implements FormatDiagn
     readonly printer: Printer;
     readonly internal: InternalAPI;
     constructor(options?: APIOptions | LSPConnectionOptions);
+    /**
+     * Looks up a remote declaration's binder symbol. Throws for synthesized or configuration ASTs.
+     */
+    getSymbol(declaration: Declaration): Promise<Symbol>;
+    private fetchDeclarationSymbol;
     /**
      * Create an API instance from an existing LSP connection's API session.
      * Use this when connecting to an API pipe provided by an LSP server via custom/initializeAPISession.
@@ -162,15 +169,16 @@ export declare class API<FromLSP extends boolean = false> implements FormatDiagn
     createProgram(rootFiles: readonly DocumentIdentifier[], compilerOptions: CompilerOptions, createProgramOptions?: CreateProgramOptions): Promise<Program>;
 }
 type EnsureInitialized = () => Promise<void>;
+/** Looks up a remote declaration's binder symbol through its API. Throws for non-remote declarations. */
+export declare function getSymbol(declaration: Declaration): Promise<Symbol>;
 /** An independently retained source file and its disposable remote-lifetime lease. */
 export declare class RetainedSourceFile {
     readonly sourceFile: SourceFile;
     private readonly lease;
-    private readonly client;
     private readonly onDispose;
     private disposed;
     private disposePromise;
-    constructor(sourceFile: SourceFile, lease: number, client: Client, onDispose: () => void);
+    constructor(sourceFile: SourceFile, lease: number, onDispose: () => void);
     [globalThis.Symbol.asyncDispose](): Promise<void>;
     dispose(): Promise<void>;
     private disposeWorker;
@@ -234,7 +242,7 @@ export declare class Snapshot {
     readonly operation: SnapshotOperation;
     private projectMap;
     private toPath;
-    private client;
+    private readonly api;
     private disposed;
     private disposePromise;
     private onDispose;
@@ -242,7 +250,8 @@ export declare class Snapshot {
     private projectDataMap;
     private updateSnapshot;
     readonly internal: SnapshotInternalAPI;
-    constructor(data: CreateSnapshotResponse, client: Client, sourceFileCache: SourceFileCache<Symbol>, toPath: (fileName: string) => Path, formatDiagnosticsHost: FormatDiagnosticsHost, onDispose: () => void, updateSnapshot: SnapshotUpdater, baseSnapshot?: Snapshot);
+    private get client();
+    constructor(data: CreateSnapshotResponse, toPath: (fileName: string, basePath?: string) => Path, api: API<boolean>, onDispose: () => void, updateSnapshot: SnapshotUpdater, baseSnapshot?: Snapshot);
     getProjects(): readonly Project[];
     getConfiguredProject(configFileName: string): Project<ConfiguredProjectId> | undefined;
     getProject<Id extends ProjectId>(projectId: Id): Project<Id> | undefined;
@@ -288,15 +297,15 @@ declare class SnapshotObjectRegistry {
     clear(): void;
 }
 declare class ProjectObjectRegistry {
-    private client;
     private snapshotId;
     readonly project: Project;
     private snapshotRegistry;
-    private sourceFileCache;
     private types;
     private signatures;
     private disposed;
-    constructor(client: Client, snapshotId: number, project: Project, snapshotRegistry: SnapshotObjectRegistry, sourceFileCache: SourceFileCache<Symbol>);
+    private get client();
+    private get sourceFileCache();
+    constructor(snapshotId: number, project: Project, snapshotRegistry: SnapshotObjectRegistry);
     getOrCreateSymbol(data: ProtocolSymbolResponse): Symbol;
     /** Find an already-interned symbol and retain its file record for this registry. */
     getCachedSymbol(reference: CompactSymbolReference): Symbol | undefined;
@@ -323,6 +332,8 @@ declare class ProjectObjectRegistry {
     fetchTypeParameterAtPosition(source: Signature, pos: number): Promise<Type>;
 }
 export declare class Project<Id extends ProjectId = ProjectId> {
+    /** @internal */
+    readonly api: API<boolean>;
     readonly id: Id;
     readonly configFileName: string;
     readonly currentDirectory: string;
@@ -335,9 +346,8 @@ export declare class Project<Id extends ProjectId = ProjectId> {
     readonly program: Program<Id>;
     readonly checker: Checker;
     readonly languageService: LanguageService;
-    private client;
     private snapshotId;
-    constructor(data: ProjectResponse, snapshotId: number, client: Client, sourceFileCache: SourceFileCache<Symbol>, toPath: (fileName: string) => Path, formatDiagnosticsHost: FormatDiagnosticsHost, snapshotRegistry: SnapshotObjectRegistry);
+    constructor(data: ProjectResponse, snapshotId: number, toPath: (fileName: string, basePath?: string) => Path, api: API<boolean>, snapshotRegistry: SnapshotObjectRegistry);
     /** @deprecated Use `languageService.getImportAdderEdits`. */
     getImportAdderEdits(file: DocumentIdentifier, actions: readonly APIImportAdderAction[]): Promise<readonly TextEdit[]>;
     /** @deprecated Use `languageService.getImportEditsForSymbols`. */
@@ -347,9 +357,9 @@ export declare class Project<Id extends ProjectId = ProjectId> {
 export declare class LanguageService {
     private snapshotId;
     private project;
-    private client;
     private objectRegistry;
-    constructor(snapshotId: number, project: Project, client: Client, objectRegistry: ProjectObjectRegistry);
+    private get client();
+    constructor(snapshotId: number, project: Project, objectRegistry: ProjectObjectRegistry);
     getImportAdderEdits(file: DocumentIdentifier, actions: readonly APIImportAdderAction[]): Promise<readonly TextEdit[]>;
     getImportEditsForSymbols(file: DocumentIdentifier, symbols: readonly Symbol[], options?: GetImportEditsForSymbolsOptions): Promise<readonly TextEdit[]>;
     getReferencedSymbolsForNode(node: Node, position: number): Promise<ReferencedSymbolEntry[]>;
@@ -361,15 +371,14 @@ export declare class Program<Id extends ProjectId = ProjectId> implements Format
     readonly snapshotId: number;
     readonly id: Id;
     private readonly project;
-    private readonly client;
-    private readonly sourceFileCache;
     private readonly toPath;
-    private readonly formatDiagnosticsHost;
     private readonly decoder;
     private readonly sourceFileMetadataCache;
     private ownedSnapshot;
     private disposePromise;
-    constructor(snapshotId: number, project: Project<Id>, client: Client, sourceFileCache: SourceFileCache<Symbol>, toPath: (fileName: string) => Path, formatDiagnosticsHost: FormatDiagnosticsHost);
+    private get client();
+    private get sourceFileCache();
+    constructor(snapshotId: number, project: Project<Id>, toPath: (fileName: string, basePath?: string) => Path);
     getCurrentDirectory(): string;
     getCanonicalFileName(fileName: string): string;
     getNewLine(): string;
@@ -518,11 +527,11 @@ export declare class BuildOrchestrator {
 export declare class Checker {
     private snapshotId;
     private project;
-    private client;
     private objectRegistry;
     private wellKnownSymbols;
     private wellKnownSignatures;
-    constructor(snapshotId: number, project: Project, client: Client, objectRegistry: ProjectObjectRegistry);
+    private get client();
+    constructor(snapshotId: number, project: Project, objectRegistry: ProjectObjectRegistry);
     dispose(): void;
     getSymbolAtLocation(node: Node): Promise<Symbol | undefined>;
     getSymbolAtLocation(nodes: readonly Node[]): Promise<(Symbol | undefined)[]>;
@@ -794,11 +803,10 @@ export interface SignatureUsage {
     /** The node handle for the call expression, if the reference is invoked. */
     call?: NodeHandle | undefined;
 }
-/** A cached source-file record and the dependencies needed to materialize or extend it. */
+/** A cached source-file record and its owning API. */
 interface SourceFileOwner {
     readonly record: CachedSourceFile<Symbol>;
-    readonly cache: SourceFileCache<Symbol>;
-    readonly client: Client;
+    readonly api: API<boolean>;
 }
 type SymbolStorage = {
     readonly kind: typeof SymbolOwnerKind.File;

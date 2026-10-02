@@ -5,7 +5,7 @@
   "type": "module",
   "files": [
     "dist",
-    "lib/tsc.wasm",
+    "lib",
     "LICENSE.txt",
     "NOTICE.txt"
   ],
@@ -15,12 +15,8 @@
       "@typescript/source": "./src/index.ts",
       "default": "./dist/index.js"
     },
-    "./tsc.wasm": "./lib/tsc.wasm"
+    "./lib/libFiles.json": "./lib/libFiles.json",
+    "./lib/tsc.wasm": "./lib/tsc.wasm"
   },
-  "imports": {
-    "#wasmURL": {
-      "@typescript/source": "./src/wasmURL.source.ts",
-      "default": "./dist/wasmURL.js"
-    }
-  }
+  "imports": {}
 }

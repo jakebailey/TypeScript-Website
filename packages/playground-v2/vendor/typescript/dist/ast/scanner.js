@@ -84,6 +84,7 @@ export const textToKeywordObj = {
     return: SyntaxKind.ReturnKeyword,
     satisfies: SyntaxKind.SatisfiesKeyword,
     set: SyntaxKind.SetKeyword,
+    source: SyntaxKind.SourceKeyword,
     static: SyntaxKind.StaticKeyword,
     string: SyntaxKind.StringKeyword,
     super: SyntaxKind.SuperKeyword,

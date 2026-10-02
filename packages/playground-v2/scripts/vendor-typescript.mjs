@@ -9,9 +9,25 @@ const typescriptDirectory = resolve(process.env.TYPESCRIPT_REPO || resolve(websi
 const vendorDirectory = resolve(packageDirectory, "vendor")
 const typescriptPackage = resolve(typescriptDirectory, "packages/typescript")
 const wasmPackage = resolve(typescriptDirectory, "packages/typescript-wasip1-wasm")
-const libDirectory = resolve(typescriptDirectory, "built/local")
+const libDirectory = resolve(wasmPackage, "lib")
 const packageNames = ["typescript", "typescript-wasip1-wasm"]
 const legalFiles = ["LICENSE.txt", "NOTICE.txt"]
+
+const libFileNames = JSON.parse(await readFile(resolve(libDirectory, "libFiles.json"), "utf8"))
+const expectedLibFileNames = (await readdir(libDirectory)).filter(fileName => /^lib(?:\..+)?\.d\.ts$/.test(fileName)).sort()
+if (
+  !Array.isArray(libFileNames) ||
+  libFileNames.length === 0 ||
+  JSON.stringify(libFileNames) !== JSON.stringify(expectedLibFileNames)
+) {
+  throw new Error("The WASI package library index does not match its declaration files")
+}
+await Promise.all([
+  readFile(resolve(typescriptPackage, "dist/wasm/index.js")),
+  readFile(resolve(typescriptPackage, "schemas/tsconfig.schema.json")),
+  readFile(resolve(typescriptPackage, "schemas/jsconfig.schema.json")),
+  readFile(resolve(wasmPackage, "lib/tsc.wasm")),
+])
 
 await Promise.all([
   rm(resolve(vendorDirectory, "lib"), { force: true, recursive: true }),
@@ -28,9 +44,8 @@ await Promise.all([
   cp(resolve(wasmPackage, "dist"), resolve(vendorDirectory, "typescript-wasip1-wasm/dist"), {
     recursive: true,
   }),
-  mkdir(resolve(vendorDirectory, "typescript-wasip1-wasm/lib"), { recursive: true }).then(() =>
-    cp(resolve(wasmPackage, "lib/tsc.wasm"), resolve(vendorDirectory, "typescript-wasip1-wasm/lib/tsc.wasm"))
-  ),
+  cp(resolve(wasmPackage, "lib"), resolve(vendorDirectory, "typescript-wasip1-wasm/lib"), { recursive: true }),
+  cp(resolve(typescriptPackage, "schemas"), resolve(vendorDirectory, "typescript/schemas"), { recursive: true }),
   writeVendorManifest(typescriptPackage, "typescript"),
   writeVendorManifest(wasmPackage, "typescript-wasip1-wasm"),
   ...packageNames.flatMap(packageName =>
@@ -39,13 +54,6 @@ await Promise.all([
     )
   ),
 ])
-
-const vendorLibDirectory = resolve(vendorDirectory, "lib")
-await mkdir(vendorLibDirectory, { recursive: true })
-const libFileNames = (await readdir(libDirectory)).filter(fileName => /^lib(?:\..+)?\.d\.ts$/.test(fileName))
-await Promise.all(
-  libFileNames.map(fileName => cp(resolve(libDirectory, fileName), resolve(vendorLibDirectory, fileName)))
-)
 
 const versionResult = spawnSync(resolve(typescriptDirectory, "built/local/tsc"), ["--version"], { encoding: "utf8" })
 if (versionResult.status !== 0) {
@@ -85,7 +93,7 @@ async function writeVendorManifest(sourceDirectory, vendorName) {
     version: manifest.version,
     license: manifest.license,
     type: manifest.type,
-    files: vendorName === "typescript-wasip1-wasm" ? ["dist", "lib/tsc.wasm", ...legalFiles] : ["dist", ...legalFiles],
+    files: vendorName === "typescript-wasip1-wasm" ? ["dist", "lib", ...legalFiles] : ["dist", "schemas", ...legalFiles],
     exports,
     imports,
   }

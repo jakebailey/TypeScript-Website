@@ -1,20 +1,13 @@
-import { JsxEmit } from "#enums/jsxEmit";
-import { ModuleDetectionKind } from "#enums/moduleDetectionKind";
 import { ModuleKind } from "#enums/moduleKind";
-import { ModuleResolutionKind } from "#enums/moduleResolutionKind";
-import { NewLineKind } from "#enums/newLineKind";
 import { ScriptKind } from "#enums/scriptKind";
-import { ScriptTarget } from "#enums/scriptTarget";
 import { SymbolOwnerKind } from "#enums/symbolOwnerKind";
 import type { Path } from "../ast/index.ts";
-export { JsxEmit } from "#enums/jsxEmit";
-export { ModuleDetectionKind } from "#enums/moduleDetectionKind";
+import type { CompilerOptions } from "./compilerOptions.generated.ts";
+import type { UserPreferences } from "./userPreferences.generated.ts";
 export { ModuleKind } from "#enums/moduleKind";
-export { ModuleResolutionKind } from "#enums/moduleResolutionKind";
-export { NewLineKind } from "#enums/newLineKind";
 export { ScriptKind } from "#enums/scriptKind";
-export { ScriptTarget } from "#enums/scriptTarget";
 export { SymbolOwnerKind } from "#enums/symbolOwnerKind";
+export * from "./compilerOptions.generated.ts";
 export type APIMethod<TParams, TResult> = {
     params: TParams;
     result: TResult;
@@ -24,6 +17,7 @@ export interface APIMethodInfo {
     releaseSourceFile: APIMethod<ReleaseSourceFileParams, unknown>;
     retainSourceFile: APIMethod<RetainSourceFileParams, RetainSourceFileResponse>;
     getCachedSourceFile: APIMethod<GetCachedSourceFileParams, SourceFileResponse>;
+    getSymbolOfDeclaration: APIMethod<GetSymbolOfDeclarationParams, SymbolResponse>;
     batchRequests: APIMethod<BatchRequestsParams, BatchRequestsResponse>;
     initialize: APIMethod<null, InitializeResponse>;
     createSnapshot: APIMethod<CreateSnapshotParams, CreateSnapshotResponse>;
@@ -236,6 +230,20 @@ export interface SourceFileResponse {
     /** Data is the base64-encoded binary AST data in the encoder's format. */
     data: string;
 }
+export interface GetSymbolOfDeclarationParams {
+    file: SourceFileDescriptor;
+    index: number;
+}
+export interface SymbolResponse {
+    reference: SymbolReference;
+    name: string;
+    flags: number;
+    checkFlags: number;
+    declarations?: string[] | undefined;
+    valueDeclaration?: string | undefined;
+    parent?: CompactSymbolReference | undefined;
+    exportSymbol?: CompactSymbolReference | undefined;
+}
 export interface BatchRequestsParams {
     requests: readonly BatchRequest[] | null;
     continuationToken?: string | undefined;
@@ -254,6 +262,10 @@ export interface InitializeResponse {
 }
 /** CreateSnapshotParams are the parameters for creating a new independent snapshot. */
 export interface CreateSnapshotParams extends SnapshotRequestChangesParams {
+    /** UserPreferences configures language service behavior in the new snapshot. */
+    userPreferences?: UserPreferences | undefined;
+    /** PrepareAutoImports identifies the file whose auto-import indexes should be ready in the new snapshot. */
+    prepareAutoImports?: DocumentIdentifier | undefined;
     /** FileNotifications describes host file system changes to invalidate while creating the snapshot. */
     fileNotifications?: FileNotifications | undefined;
     /**
@@ -405,16 +417,6 @@ export interface GetSymbolAtPositionParams {
     project: ProjectId;
     file: DocumentIdentifier;
     position: number;
-}
-export interface SymbolResponse {
-    reference: SymbolReference;
-    name: string;
-    flags: number;
-    checkFlags: number;
-    declarations?: string[] | undefined;
-    valueDeclaration?: string | undefined;
-    parent?: CompactSymbolReference | undefined;
-    exportSymbol?: CompactSymbolReference | undefined;
 }
 export interface GetSymbolsAtPositionsParams {
     snapshot: number;
@@ -989,12 +991,26 @@ export interface SourceFileDescriptor {
     scriptKind: ScriptKind;
     nodeId: string;
 }
+/** SymbolReference identifies a symbol and its server-resolvable owner. */
+export interface SymbolReference extends SymbolOwner {
+    id: number;
+}
+/**
+ * CompactSymbolReference is embedded in other responses. It identifies a cached
+ * symbol without repeating its owning file's full descriptor: File is the owning source file's
+ * node ID, or empty for a symbol owned by the response's snapshot. When the client has not cached
+ * the symbol, it fetches a full SymbolResponse through the corresponding property method.
+ */
+export interface CompactSymbolReference {
+    id: number;
+    file?: string | undefined;
+}
 export interface BatchRequest {
-    method: "batchRequests" | "build" | "buildReferences" | "cleanBuild" | "cleanReferences" | "createBuildOrchestrator" | "createModuleResolver" | "createSnapshot" | "createSourceFile" | "createSourceFileFromFile" | "disposeBuildOrchestrator" | "emit" | "emitToString" | "formatNodeForInsertion" | "getAliasSymbolOfType" | "getAliasTypeArgumentsOfType" | "getAliasedSymbol" | "getAnyType" | "getApparentPropertiesOfType" | "getApparentType" | "getAwaitedType" | "getBaseConstraintOfType" | "getBaseTypeOfLiteralType" | "getBaseTypeOfType" | "getBaseTypes" | "getBigIntType" | "getBindDiagnostics" | "getBooleanType" | "getCachedSourceFile" | "getCheckTypeOfType" | "getCompletionsAtPosition" | "getConfigFileNames" | "getConfigFileParsingDiagnostics" | "getConfigSourceFile" | "getConstantValue" | "getConstraintOfType" | "getConstraintOfTypeParameter" | "getConstraintTypeOfMappedType" | "getContextualType" | "getContextualTypeForArgument" | "getCurrentLanguageServerSnapshot" | "getDeclarationDiagnostics" | "getDeclarationEmit" | "getDeclaredTypeOfSymbol" | "getDefaultFromTypeParameter" | "getDefaultProjectForFile" | "getDocumentationComment" | "getESSymbolType" | "getExportSpecifierLocalTargetSymbol" | "getExportSymbolOfSymbol" | "getExportSymbolOfSymbolForChecker" | "getExportsOfModule" | "getExportsOfSymbol" | "getExtendsTypeOfType" | "getFalseTypeOfConditionalType" | "getFreshTypeOfType" | "getFullyQualifiedName" | "getGlobalDiagnostics" | "getImmediateAliasedSymbol" | "getImportAdderEdits" | "getIndexInfoOfType" | "getIndexInfosOfType" | "getIndexTypeOfType" | "getJavaScriptEmit" | "getJsDocTags" | "getLocalTypeParametersOfType" | "getMemberInModuleExports" | "getMembersOfSymbol" | "getModeForResolutionAtIndex" | "getModeForUsageLocation" | "getNameTypeOfMappedType" | "getNeverType" | "getNonMissingTypeOfSymbol" | "getNonNullableType" | "getNonPrimitiveType" | "getNullType" | "getNumberType" | "getObjectTypeOfType" | "getOuterTypeParametersOfType" | "getParameterType" | "getParametersOfSignature" | "getParentOfSymbol" | "getProgramDiagnostics" | "getPropertiesOfType" | "getPropertyOfType" | "getReducedType" | "getReferencedSymbolsForNode" | "getReferencesToSymbolInFile" | "getRegularTypeOfType" | "getResolvedModule" | "getResolvedModuleFromModuleSpecifier" | "getResolvedSignature" | "getResolvedTypeReferenceDirective" | "getResolvedTypeReferenceDirectiveFromTypeReferenceDirective" | "getRestTypeOfSignature" | "getReturnTypeOfSignature" | "getSemanticDiagnostics" | "getShorthandAssignmentValueSymbol" | "getSignatureFromDeclaration" | "getSignatureUsages" | "getSignaturesOfType" | "getSourceFile" | "getSourceFileMetadata" | "getSourceFileNames" | "getStringType" | "getSuggestionDiagnostics" | "getSymbolAtLocation" | "getSymbolAtPosition" | "getSymbolOfSourceFile" | "getSymbolOfType" | "getSymbolsAtLocations" | "getSymbolsAtPositions" | "getSymbolsInScope" | "getSymbolsOfSourceFiles" | "getSyntacticDiagnostics" | "getTargetOfSignature" | "getTargetOfType" | "getTargetSymbol" | "getTemplateTypeOfMappedType" | "getThisParameterOfSignature" | "getThisTypeOfType" | "getTrueTypeOfConditionalType" | "getTypeArguments" | "getTypeAtLocation" | "getTypeAtLocations" | "getTypeAtPosition" | "getTypeFromTypeNode" | "getTypeOfPropertyOfType" | "getTypeOfSymbol" | "getTypeOfSymbolAtLocation" | "getTypeParameterAtPosition" | "getTypeParameterOfMappedType" | "getTypeParametersOfSignature" | "getTypeParametersOfType" | "getTypePredicateOfSignature" | "getTypesAtPositions" | "getTypesOfSymbols" | "getTypesOfType" | "getUndefinedType" | "getUnknownType" | "getVoidType" | "getWellKnownSignatures" | "getWellKnownSymbols" | "getWidenedType" | "initialize" | "isArrayLikeType" | "isArrayType" | "isContextSensitive" | "isReadonlySymbol" | "isTypeAssignableTo" | "parseCommandLine" | "parseConfigFile" | "parseJsonConfigFileContent" | "printNode" | "readConfigFile" | "release" | "releaseModuleResolver" | "releaseSourceFile" | "resolveModuleName" | "resolveName" | "retainSourceFile" | "saveHeapProfile" | "signatureToSignatureDeclaration" | "startCPUProfile" | "stopCPUProfile" | "transpileDeclaration" | "transpileDeclarationFromFile" | "transpileModule" | "transpileModuleFromFile" | "typeToString" | "typeToTypeNode" | "updateSnapshot";
+    method: "batchRequests" | "build" | "buildReferences" | "cleanBuild" | "cleanReferences" | "createBuildOrchestrator" | "createModuleResolver" | "createSnapshot" | "createSourceFile" | "createSourceFileFromFile" | "disposeBuildOrchestrator" | "emit" | "emitToString" | "formatNodeForInsertion" | "getAliasSymbolOfType" | "getAliasTypeArgumentsOfType" | "getAliasedSymbol" | "getAnyType" | "getApparentPropertiesOfType" | "getApparentType" | "getAwaitedType" | "getBaseConstraintOfType" | "getBaseTypeOfLiteralType" | "getBaseTypeOfType" | "getBaseTypes" | "getBigIntType" | "getBindDiagnostics" | "getBooleanType" | "getCachedSourceFile" | "getCheckTypeOfType" | "getCompletionsAtPosition" | "getConfigFileNames" | "getConfigFileParsingDiagnostics" | "getConfigSourceFile" | "getConstantValue" | "getConstraintOfType" | "getConstraintOfTypeParameter" | "getConstraintTypeOfMappedType" | "getContextualType" | "getContextualTypeForArgument" | "getCurrentLanguageServerSnapshot" | "getDeclarationDiagnostics" | "getDeclarationEmit" | "getDeclaredTypeOfSymbol" | "getDefaultFromTypeParameter" | "getDefaultProjectForFile" | "getDocumentationComment" | "getESSymbolType" | "getExportSpecifierLocalTargetSymbol" | "getExportSymbolOfSymbol" | "getExportSymbolOfSymbolForChecker" | "getExportsOfModule" | "getExportsOfSymbol" | "getExtendsTypeOfType" | "getFalseTypeOfConditionalType" | "getFreshTypeOfType" | "getFullyQualifiedName" | "getGlobalDiagnostics" | "getImmediateAliasedSymbol" | "getImportAdderEdits" | "getIndexInfoOfType" | "getIndexInfosOfType" | "getIndexTypeOfType" | "getJavaScriptEmit" | "getJsDocTags" | "getLocalTypeParametersOfType" | "getMemberInModuleExports" | "getMembersOfSymbol" | "getModeForResolutionAtIndex" | "getModeForUsageLocation" | "getNameTypeOfMappedType" | "getNeverType" | "getNonMissingTypeOfSymbol" | "getNonNullableType" | "getNonPrimitiveType" | "getNullType" | "getNumberType" | "getObjectTypeOfType" | "getOuterTypeParametersOfType" | "getParameterType" | "getParametersOfSignature" | "getParentOfSymbol" | "getProgramDiagnostics" | "getPropertiesOfType" | "getPropertyOfType" | "getReducedType" | "getReferencedSymbolsForNode" | "getReferencesToSymbolInFile" | "getRegularTypeOfType" | "getResolvedModule" | "getResolvedModuleFromModuleSpecifier" | "getResolvedSignature" | "getResolvedTypeReferenceDirective" | "getResolvedTypeReferenceDirectiveFromTypeReferenceDirective" | "getRestTypeOfSignature" | "getReturnTypeOfSignature" | "getSemanticDiagnostics" | "getShorthandAssignmentValueSymbol" | "getSignatureFromDeclaration" | "getSignatureUsages" | "getSignaturesOfType" | "getSourceFile" | "getSourceFileMetadata" | "getSourceFileNames" | "getStringType" | "getSuggestionDiagnostics" | "getSymbolAtLocation" | "getSymbolAtPosition" | "getSymbolOfDeclaration" | "getSymbolOfSourceFile" | "getSymbolOfType" | "getSymbolsAtLocations" | "getSymbolsAtPositions" | "getSymbolsInScope" | "getSymbolsOfSourceFiles" | "getSyntacticDiagnostics" | "getTargetOfSignature" | "getTargetOfType" | "getTargetSymbol" | "getTemplateTypeOfMappedType" | "getThisParameterOfSignature" | "getThisTypeOfType" | "getTrueTypeOfConditionalType" | "getTypeArguments" | "getTypeAtLocation" | "getTypeAtLocations" | "getTypeAtPosition" | "getTypeFromTypeNode" | "getTypeOfPropertyOfType" | "getTypeOfSymbol" | "getTypeOfSymbolAtLocation" | "getTypeParameterAtPosition" | "getTypeParameterOfMappedType" | "getTypeParametersOfSignature" | "getTypeParametersOfType" | "getTypePredicateOfSignature" | "getTypesAtPositions" | "getTypesOfSymbols" | "getTypesOfType" | "getUndefinedType" | "getUnknownType" | "getVoidType" | "getWellKnownSignatures" | "getWellKnownSymbols" | "getWidenedType" | "initialize" | "isArrayLikeType" | "isArrayType" | "isContextSensitive" | "isReadonlySymbol" | "isTypeAssignableTo" | "parseCommandLine" | "parseConfigFile" | "parseJsonConfigFileContent" | "printNode" | "readConfigFile" | "release" | "releaseModuleResolver" | "releaseSourceFile" | "resolveModuleName" | "resolveName" | "retainSourceFile" | "saveHeapProfile" | "signatureToSignatureDeclaration" | "startCPUProfile" | "stopCPUProfile" | "transpileDeclaration" | "transpileDeclarationFromFile" | "transpileModule" | "transpileModuleFromFile" | "typeToString" | "typeToTypeNode" | "updateSnapshot";
     params?: unknown | undefined;
 }
 export interface BatchResponse {
-    method: "batchRequests" | "build" | "buildReferences" | "cleanBuild" | "cleanReferences" | "createBuildOrchestrator" | "createModuleResolver" | "createSnapshot" | "createSourceFile" | "createSourceFileFromFile" | "disposeBuildOrchestrator" | "emit" | "emitToString" | "formatNodeForInsertion" | "getAliasSymbolOfType" | "getAliasTypeArgumentsOfType" | "getAliasedSymbol" | "getAnyType" | "getApparentPropertiesOfType" | "getApparentType" | "getAwaitedType" | "getBaseConstraintOfType" | "getBaseTypeOfLiteralType" | "getBaseTypeOfType" | "getBaseTypes" | "getBigIntType" | "getBindDiagnostics" | "getBooleanType" | "getCachedSourceFile" | "getCheckTypeOfType" | "getCompletionsAtPosition" | "getConfigFileNames" | "getConfigFileParsingDiagnostics" | "getConfigSourceFile" | "getConstantValue" | "getConstraintOfType" | "getConstraintOfTypeParameter" | "getConstraintTypeOfMappedType" | "getContextualType" | "getContextualTypeForArgument" | "getCurrentLanguageServerSnapshot" | "getDeclarationDiagnostics" | "getDeclarationEmit" | "getDeclaredTypeOfSymbol" | "getDefaultFromTypeParameter" | "getDefaultProjectForFile" | "getDocumentationComment" | "getESSymbolType" | "getExportSpecifierLocalTargetSymbol" | "getExportSymbolOfSymbol" | "getExportSymbolOfSymbolForChecker" | "getExportsOfModule" | "getExportsOfSymbol" | "getExtendsTypeOfType" | "getFalseTypeOfConditionalType" | "getFreshTypeOfType" | "getFullyQualifiedName" | "getGlobalDiagnostics" | "getImmediateAliasedSymbol" | "getImportAdderEdits" | "getIndexInfoOfType" | "getIndexInfosOfType" | "getIndexTypeOfType" | "getJavaScriptEmit" | "getJsDocTags" | "getLocalTypeParametersOfType" | "getMemberInModuleExports" | "getMembersOfSymbol" | "getModeForResolutionAtIndex" | "getModeForUsageLocation" | "getNameTypeOfMappedType" | "getNeverType" | "getNonMissingTypeOfSymbol" | "getNonNullableType" | "getNonPrimitiveType" | "getNullType" | "getNumberType" | "getObjectTypeOfType" | "getOuterTypeParametersOfType" | "getParameterType" | "getParametersOfSignature" | "getParentOfSymbol" | "getProgramDiagnostics" | "getPropertiesOfType" | "getPropertyOfType" | "getReducedType" | "getReferencedSymbolsForNode" | "getReferencesToSymbolInFile" | "getRegularTypeOfType" | "getResolvedModule" | "getResolvedModuleFromModuleSpecifier" | "getResolvedSignature" | "getResolvedTypeReferenceDirective" | "getResolvedTypeReferenceDirectiveFromTypeReferenceDirective" | "getRestTypeOfSignature" | "getReturnTypeOfSignature" | "getSemanticDiagnostics" | "getShorthandAssignmentValueSymbol" | "getSignatureFromDeclaration" | "getSignatureUsages" | "getSignaturesOfType" | "getSourceFile" | "getSourceFileMetadata" | "getSourceFileNames" | "getStringType" | "getSuggestionDiagnostics" | "getSymbolAtLocation" | "getSymbolAtPosition" | "getSymbolOfSourceFile" | "getSymbolOfType" | "getSymbolsAtLocations" | "getSymbolsAtPositions" | "getSymbolsInScope" | "getSymbolsOfSourceFiles" | "getSyntacticDiagnostics" | "getTargetOfSignature" | "getTargetOfType" | "getTargetSymbol" | "getTemplateTypeOfMappedType" | "getThisParameterOfSignature" | "getThisTypeOfType" | "getTrueTypeOfConditionalType" | "getTypeArguments" | "getTypeAtLocation" | "getTypeAtLocations" | "getTypeAtPosition" | "getTypeFromTypeNode" | "getTypeOfPropertyOfType" | "getTypeOfSymbol" | "getTypeOfSymbolAtLocation" | "getTypeParameterAtPosition" | "getTypeParameterOfMappedType" | "getTypeParametersOfSignature" | "getTypeParametersOfType" | "getTypePredicateOfSignature" | "getTypesAtPositions" | "getTypesOfSymbols" | "getTypesOfType" | "getUndefinedType" | "getUnknownType" | "getVoidType" | "getWellKnownSignatures" | "getWellKnownSymbols" | "getWidenedType" | "initialize" | "isArrayLikeType" | "isArrayType" | "isContextSensitive" | "isReadonlySymbol" | "isTypeAssignableTo" | "parseCommandLine" | "parseConfigFile" | "parseJsonConfigFileContent" | "printNode" | "readConfigFile" | "release" | "releaseModuleResolver" | "releaseSourceFile" | "resolveModuleName" | "resolveName" | "retainSourceFile" | "saveHeapProfile" | "signatureToSignatureDeclaration" | "startCPUProfile" | "stopCPUProfile" | "transpileDeclaration" | "transpileDeclarationFromFile" | "transpileModule" | "transpileModuleFromFile" | "typeToString" | "typeToTypeNode" | "updateSnapshot";
+    method: "batchRequests" | "build" | "buildReferences" | "cleanBuild" | "cleanReferences" | "createBuildOrchestrator" | "createModuleResolver" | "createSnapshot" | "createSourceFile" | "createSourceFileFromFile" | "disposeBuildOrchestrator" | "emit" | "emitToString" | "formatNodeForInsertion" | "getAliasSymbolOfType" | "getAliasTypeArgumentsOfType" | "getAliasedSymbol" | "getAnyType" | "getApparentPropertiesOfType" | "getApparentType" | "getAwaitedType" | "getBaseConstraintOfType" | "getBaseTypeOfLiteralType" | "getBaseTypeOfType" | "getBaseTypes" | "getBigIntType" | "getBindDiagnostics" | "getBooleanType" | "getCachedSourceFile" | "getCheckTypeOfType" | "getCompletionsAtPosition" | "getConfigFileNames" | "getConfigFileParsingDiagnostics" | "getConfigSourceFile" | "getConstantValue" | "getConstraintOfType" | "getConstraintOfTypeParameter" | "getConstraintTypeOfMappedType" | "getContextualType" | "getContextualTypeForArgument" | "getCurrentLanguageServerSnapshot" | "getDeclarationDiagnostics" | "getDeclarationEmit" | "getDeclaredTypeOfSymbol" | "getDefaultFromTypeParameter" | "getDefaultProjectForFile" | "getDocumentationComment" | "getESSymbolType" | "getExportSpecifierLocalTargetSymbol" | "getExportSymbolOfSymbol" | "getExportSymbolOfSymbolForChecker" | "getExportsOfModule" | "getExportsOfSymbol" | "getExtendsTypeOfType" | "getFalseTypeOfConditionalType" | "getFreshTypeOfType" | "getFullyQualifiedName" | "getGlobalDiagnostics" | "getImmediateAliasedSymbol" | "getImportAdderEdits" | "getIndexInfoOfType" | "getIndexInfosOfType" | "getIndexTypeOfType" | "getJavaScriptEmit" | "getJsDocTags" | "getLocalTypeParametersOfType" | "getMemberInModuleExports" | "getMembersOfSymbol" | "getModeForResolutionAtIndex" | "getModeForUsageLocation" | "getNameTypeOfMappedType" | "getNeverType" | "getNonMissingTypeOfSymbol" | "getNonNullableType" | "getNonPrimitiveType" | "getNullType" | "getNumberType" | "getObjectTypeOfType" | "getOuterTypeParametersOfType" | "getParameterType" | "getParametersOfSignature" | "getParentOfSymbol" | "getProgramDiagnostics" | "getPropertiesOfType" | "getPropertyOfType" | "getReducedType" | "getReferencedSymbolsForNode" | "getReferencesToSymbolInFile" | "getRegularTypeOfType" | "getResolvedModule" | "getResolvedModuleFromModuleSpecifier" | "getResolvedSignature" | "getResolvedTypeReferenceDirective" | "getResolvedTypeReferenceDirectiveFromTypeReferenceDirective" | "getRestTypeOfSignature" | "getReturnTypeOfSignature" | "getSemanticDiagnostics" | "getShorthandAssignmentValueSymbol" | "getSignatureFromDeclaration" | "getSignatureUsages" | "getSignaturesOfType" | "getSourceFile" | "getSourceFileMetadata" | "getSourceFileNames" | "getStringType" | "getSuggestionDiagnostics" | "getSymbolAtLocation" | "getSymbolAtPosition" | "getSymbolOfDeclaration" | "getSymbolOfSourceFile" | "getSymbolOfType" | "getSymbolsAtLocations" | "getSymbolsAtPositions" | "getSymbolsInScope" | "getSymbolsOfSourceFiles" | "getSyntacticDiagnostics" | "getTargetOfSignature" | "getTargetOfType" | "getTargetSymbol" | "getTemplateTypeOfMappedType" | "getThisParameterOfSignature" | "getThisTypeOfType" | "getTrueTypeOfConditionalType" | "getTypeArguments" | "getTypeAtLocation" | "getTypeAtLocations" | "getTypeAtPosition" | "getTypeFromTypeNode" | "getTypeOfPropertyOfType" | "getTypeOfSymbol" | "getTypeOfSymbolAtLocation" | "getTypeParameterAtPosition" | "getTypeParameterOfMappedType" | "getTypeParametersOfSignature" | "getTypeParametersOfType" | "getTypePredicateOfSignature" | "getTypesAtPositions" | "getTypesOfSymbols" | "getTypesOfType" | "getUndefinedType" | "getUnknownType" | "getVoidType" | "getWellKnownSignatures" | "getWellKnownSymbols" | "getWidenedType" | "initialize" | "isArrayLikeType" | "isArrayType" | "isContextSensitive" | "isReadonlySymbol" | "isTypeAssignableTo" | "parseCommandLine" | "parseConfigFile" | "parseJsonConfigFileContent" | "printNode" | "readConfigFile" | "release" | "releaseModuleResolver" | "releaseSourceFile" | "resolveModuleName" | "resolveName" | "retainSourceFile" | "saveHeapProfile" | "signatureToSignatureDeclaration" | "startCPUProfile" | "stopCPUProfile" | "transpileDeclaration" | "transpileDeclarationFromFile" | "transpileModule" | "transpileModuleFromFile" | "typeToString" | "typeToTypeNode" | "updateSnapshot";
     result: unknown;
     error?: string | undefined;
 }
@@ -1102,115 +1118,7 @@ export interface BuildOptions {
     verbose?: boolean | undefined;
     builders?: number | undefined;
     stopBuildOnErrors?: boolean | undefined;
-    /** Internal fields */
     clean?: boolean | undefined;
-}
-/** CompilerOptions contains the compiler options exposed by the API. */
-export interface CompilerOptions {
-    allowJs?: boolean | undefined;
-    allowArbitraryExtensions?: boolean | undefined;
-    allowImportingTsExtensions?: boolean | undefined;
-    allowNonTsExtensions?: boolean | undefined;
-    allowUmdGlobalAccess?: boolean | undefined;
-    allowUnreachableCode?: boolean | undefined;
-    allowUnusedLabels?: boolean | undefined;
-    assumeChangesOnlyAffectDirectDependencies?: boolean | undefined;
-    checkJs?: boolean | undefined;
-    customConditions?: string[] | undefined;
-    composite?: boolean | undefined;
-    emitDeclarationOnly?: boolean | undefined;
-    emitBOM?: boolean | undefined;
-    emitDecoratorMetadata?: boolean | undefined;
-    declaration?: boolean | undefined;
-    declarationDir?: string | undefined;
-    declarationMap?: boolean | undefined;
-    deduplicatePackages?: boolean | undefined;
-    disableSizeLimit?: boolean | undefined;
-    disableSourceOfProjectReferenceRedirect?: boolean | undefined;
-    disableSolutionSearching?: boolean | undefined;
-    disableReferencedProjectLoad?: boolean | undefined;
-    erasableSyntaxOnly?: boolean | undefined;
-    exactOptionalPropertyTypes?: boolean | undefined;
-    experimentalDecorators?: boolean | undefined;
-    forceConsistentCasingInFileNames?: boolean | undefined;
-    isolatedModules?: boolean | undefined;
-    isolatedDeclarations?: boolean | undefined;
-    ignoreConfig?: boolean | undefined;
-    ignoreDeprecations?: string | undefined;
-    importHelpers?: boolean | undefined;
-    inlineSourceMap?: boolean | undefined;
-    inlineSources?: boolean | undefined;
-    init?: boolean | undefined;
-    incremental?: boolean | undefined;
-    jsx?: JsxEmit | undefined;
-    jsxFactory?: string | undefined;
-    jsxFragmentFactory?: string | undefined;
-    jsxImportSource?: string | undefined;
-    lib?: string[] | undefined;
-    libReplacement?: boolean | undefined;
-    locale?: string | undefined;
-    mapRoot?: string | undefined;
-    module?: ModuleKind | undefined;
-    moduleResolution?: ModuleResolutionKind | undefined;
-    moduleSuffixes?: string[] | undefined;
-    moduleDetection?: ModuleDetectionKind | undefined;
-    newLine?: NewLineKind | undefined;
-    noEmit?: boolean | undefined;
-    noCheck?: boolean | undefined;
-    noErrorTruncation?: boolean | undefined;
-    noFallthroughCasesInSwitch?: boolean | undefined;
-    noImplicitAny?: boolean | undefined;
-    noImplicitThis?: boolean | undefined;
-    noImplicitReturns?: boolean | undefined;
-    noEmitHelpers?: boolean | undefined;
-    noLib?: boolean | undefined;
-    noPropertyAccessFromIndexSignature?: boolean | undefined;
-    noUncheckedIndexedAccess?: boolean | undefined;
-    noEmitOnError?: boolean | undefined;
-    noUnusedLocals?: boolean | undefined;
-    noUnusedParameters?: boolean | undefined;
-    noResolve?: boolean | undefined;
-    noImplicitOverride?: boolean | undefined;
-    noUncheckedSideEffectImports?: boolean | undefined;
-    outDir?: string | undefined;
-    paths?: Record<string, string[]> | undefined;
-    /** Plugins are parsed only so tools can report that native TypeScript does not support them. */
-    plugins?: PluginImport[] | undefined;
-    preserveConstEnums?: boolean | undefined;
-    preserveSymlinks?: boolean | undefined;
-    project?: string | undefined;
-    resolveJsonModule?: boolean | undefined;
-    resolvePackageJsonExports?: boolean | undefined;
-    resolvePackageJsonImports?: boolean | undefined;
-    removeComments?: boolean | undefined;
-    rewriteRelativeImportExtensions?: boolean | undefined;
-    reactNamespace?: string | undefined;
-    rootDir?: string | undefined;
-    rootDirs?: string[] | undefined;
-    skipLibCheck?: boolean | undefined;
-    stableTypeOrdering?: boolean | undefined;
-    strict?: boolean | undefined;
-    strictBindCallApply?: boolean | undefined;
-    strictBuiltinIteratorReturn?: boolean | undefined;
-    strictFunctionTypes?: boolean | undefined;
-    strictNullChecks?: boolean | undefined;
-    strictPropertyInitialization?: boolean | undefined;
-    stripInternal?: boolean | undefined;
-    skipDefaultLibCheck?: boolean | undefined;
-    sourceMap?: boolean | undefined;
-    sourceRoot?: string | undefined;
-    suppressOutputPathCheck?: boolean | undefined;
-    target?: ScriptTarget | undefined;
-    traceResolution?: boolean | undefined;
-    tsBuildInfoFile?: string | undefined;
-    typeRoots?: string[] | undefined;
-    types?: string[] | undefined;
-    useDefineForClassFields?: boolean | undefined;
-    useUnknownInCatchVariables?: boolean | undefined;
-    verbatimModuleSyntax?: boolean | undefined;
-    maxNodeModuleJsDepth?: number | undefined;
-    /** Internal fields */
-    configFilePath?: string | undefined;
 }
 export interface Statistics {
     Projects: number;
@@ -1242,20 +1150,6 @@ export interface TranspileOptions {
     compilerOptions?: CompilerOptions | undefined;
     fileName?: string | undefined;
     reportDiagnostics?: boolean | undefined;
-}
-/** SymbolReference identifies a symbol and its server-resolvable owner. */
-export interface SymbolReference extends SymbolOwner {
-    id: number;
-}
-/**
- * CompactSymbolReference is embedded in other responses. It identifies a cached
- * symbol without repeating its owning file's full descriptor: File is the owning source file's
- * node ID, or empty for a symbol owned by the response's snapshot. When the client has not cached
- * the symbol, it fetches a full SymbolResponse through the corresponding property method.
- */
-export interface CompactSymbolReference {
-    id: number;
-    file?: string | undefined;
 }
 export interface PackageId {
     name: string;
@@ -1291,6 +1185,12 @@ export interface EmitOutputFile {
     fileName: string;
     text: string;
     sourceFileName?: string | undefined;
+}
+export interface SymbolOwner {
+    kind: SymbolOwnerKind;
+    file?: SourceFileDescriptor | undefined;
+    snapshot?: number | undefined;
+    project?: ProjectId | undefined;
 }
 export interface CreateSnapshotProgramParams {
     rootFiles: readonly DocumentIdentifier[] | null;
@@ -1334,20 +1234,11 @@ export interface ProjectFileChanges {
 export interface OpenedFileOperationResult {
     project: ProjectId;
 }
-export interface PluginImport {
-    name: string;
-}
 export interface ModuleResolutionEntry {
     moduleName: string;
     containingDirectory?: DocumentIdentifier | undefined;
     resolutionMode?: ResolutionMode | undefined;
     result: StaticModuleResolution;
-}
-export interface SymbolOwner {
-    kind: SymbolOwnerKind;
-    file?: SourceFileDescriptor | undefined;
-    snapshot?: number | undefined;
-    project?: ProjectId | undefined;
 }
 /** CompletionEntryLabelDetailsResponse holds additional label display text for a completion entry. */
 export interface CompletionEntryLabelDetailsResponse {

@@ -22,7 +22,7 @@ import { TypePredicateKind } from "#enums/typePredicateKind";
 import { ModifierFlags, unescapeLeadingUnderscores, } from "../../ast/index.js";
 import { assertNever } from "../../internal/utils.js";
 import { encodeNode, uint8ArrayToBase64, } from "../node/encoder.js";
-import { decodeNode, getNodeId, parseNodeHandle, readSourceFileLease, RemoteSourceFile, } from "../node/node.js";
+import { decodeNode, getNodeId, parseNodeHandle, readSourceFileLease, RemoteNode, RemoteSourceFile, } from "../node/node.js";
 import { Wtf8Decoder } from "../node/wtf8.js";
 import { createGetCanonicalFileName, toPath, } from "../path.js";
 import { resolveFileName, toCreateSnapshotRequest, validateSymbolResponse, } from "../proto.js";
@@ -52,7 +52,9 @@ function registerModuleResolutionCallback(client, callback, getSnapshot) {
 // import { sourceFileResponseToUint8Array } from "../node/encoder.ts";
 // @sync-only-end
 export class API {
+    /** @internal */
     client;
+    /** @internal */
     sourceFileCache;
     toPath;
     currentDirectory;
@@ -70,6 +72,52 @@ export class API {
         this.sourceFileCache = new SourceFileCache();
         this.printer = new Printer(this.client);
         this.internal = new InternalAPI(this.client, () => this.ensureInitialized()); // @sync: this.internal = new InternalAPI(this.client, this.ensureInitialized);
+    }
+    /**
+     * Looks up a remote declaration's binder symbol. Throws for synthesized or configuration ASTs.
+     */
+    async getSymbol(declaration) {
+        const file = getRemoteSourceFile(declaration);
+        if (!file)
+            throw new Error(`Source file not found for declaration`);
+        const record = file.symbolCache;
+        if (!record)
+            throw new Error(`Cached source file not found for declaration`);
+        const index = parseNodeHandle(getNodeId(declaration)).index;
+        const cached = record.symbolsByDeclarationNodeIndex.get(index);
+        if (cached)
+            return cached;
+        // @sync-only-start
+        // return this.fetchDeclarationSymbol(record, index);
+        // @sync-only-end
+        // @sync-skip-block-start
+        let request = record.declarationSymbolRequests.get(index);
+        if (!request) {
+            request = this.fetchDeclarationSymbol(record, index);
+            record.declarationSymbolRequests.set(index, request);
+        }
+        try {
+            return await request;
+        }
+        finally {
+            record.declarationSymbolRequests.delete(index);
+        }
+        // @sync-skip-block-end
+    }
+    async fetchDeclarationSymbol(record, index) {
+        const data = await this.client.apiRequest("getSymbolOfDeclaration", {
+            file: record.descriptor,
+            index,
+        });
+        validateSymbolResponse(data);
+        const reference = data.reference;
+        if (reference.kind !== SymbolOwnerKind.File) {
+            throw new Error(`Symbol ${reference.id} is not file-owned`);
+        }
+        const fileOwner = { record, api: this };
+        const symbol = this.sourceFileCache.getOrCreateSymbol(record, reference.file, reference.id, () => new Symbol(data, { kind: SymbolOwnerKind.File, owner: fileOwner }));
+        record.symbolsByDeclarationNodeIndex.set(index, symbol);
+        return symbol;
     }
     /**
      * Create an API instance from an existing LSP connection's API session.
@@ -102,7 +150,7 @@ export class API {
             const currentDirectory = response.currentDirectory;
             this.getCanonicalFileNameWorker = getCanonicalFileName;
             this.currentDirectory = currentDirectory;
-            this.toPath = (fileName) => toPath(fileName, currentDirectory, getCanonicalFileName);
+            this.toPath = (fileName, basePath = currentDirectory) => toPath(fileName, basePath, getCanonicalFileName);
             this.initialized = true;
         }
         catch (error) {
@@ -197,7 +245,7 @@ export class API {
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         const lease = readSourceFileLease(view);
         try {
-            const decoded = new RemoteSourceFile(data, this.decoder, this.client.getTimingCollector());
+            const decoded = new RemoteSourceFile(data, this.decoder, this.client.getTimingCollector(), this);
             return this.addSourceFileLease(decoded, lease);
         }
         catch (error) {
@@ -215,7 +263,7 @@ export class API {
     }
     addSourceFileLease(sourceFile, lease) {
         const cached = this.sourceFileCache.setForLease(sourceFile, lease);
-        const retained = new RetainedSourceFile(cached, lease, this.client, () => {
+        const retained = new RetainedSourceFile(cached, lease, () => {
             this.activeSourceFileLeases.delete(lease);
             this.sourceFileCache.releaseLease(lease);
         });
@@ -242,7 +290,7 @@ export class API {
         await this.ensureInitialized();
         const requestParams = toCreateSnapshotRequest(this.prepareCreateSnapshotParams(params));
         const data = await this.client.apiRequest("createSnapshot", requestParams);
-        const snapshot = new Snapshot(data, this.client, this.sourceFileCache, this.toPath, this, () => {
+        const snapshot = new Snapshot(data, this.toPath, this, () => {
             this.activeSnapshots.delete(snapshot.id);
             this.sourceFileCache.releaseSnapshot(snapshot.id);
         }, this.createSnapshotUpdater(() => snapshot), undefined);
@@ -263,7 +311,7 @@ export class API {
             return baseSnapshot;
         }
         this.sourceFileCache.retainForSnapshot(data.snapshot, baseSnapshot.id, data.changes);
-        const snapshot = new Snapshot(data, this.client, this.sourceFileCache, this.toPath, this, () => {
+        const snapshot = new Snapshot(data, this.toPath, this, () => {
             this.activeSnapshots.delete(snapshot.id);
             this.sourceFileCache.releaseSnapshot(snapshot.id);
         }, this.createSnapshotUpdater(() => snapshot), baseSnapshot);
@@ -317,7 +365,7 @@ export class API {
         if (baseSnapshot) {
             this.sourceFileCache.retainForSnapshot(data.snapshot, baseSnapshot.id, data.changes);
         }
-        const snapshot = new Snapshot(data, this.client, this.sourceFileCache, this.toPath, this, () => {
+        const snapshot = new Snapshot(data, this.toPath, this, () => {
             this.activeSnapshots.delete(snapshot.id);
             this.sourceFileCache.releaseSnapshot(snapshot.id);
         }, this.createSnapshotUpdater(() => snapshot), baseSnapshot);
@@ -441,18 +489,47 @@ function sourceFileDescriptor(sourceFile) {
         nodeId: sourceFile.nodeId,
     };
 }
+function getRemoteSourceFile(node) {
+    if (!(node instanceof RemoteNode))
+        return undefined;
+    const file = node.getSourceFile();
+    return file instanceof RemoteSourceFile && file.api ? file : undefined;
+}
+function getNodeAPI(node) {
+    const api = getRemoteSourceFile(node)?.api;
+    if (!api)
+        return undefined;
+    if (!(api instanceof API))
+        throw new Error("Source file does not belong to the async API"); // @sync: if (!(api instanceof API)) throw new Error("Source file does not belong to the sync API");
+    return api;
+}
+/** Looks up a remote declaration's binder symbol through its API. Throws for non-remote declarations. */
+export async function getSymbol(declaration) {
+    const api = getNodeAPI(declaration);
+    if (!api)
+        throw new Error("Source file not found for declaration");
+    return api.getSymbol(declaration);
+}
+// @sync-only-start
+// export declare namespace getSymbol {
+//     function gen(declaration: Declaration): Generator<ProtocolRequest, Symbol, ProtocolResponse["result"]>;
+// }
+// getSymbol.gen = function* (declaration: Declaration): Generator<ProtocolRequest, Symbol, ProtocolResponse["result"]> {
+//     const api = getNodeAPI(declaration);
+//     if (!api) throw new Error("Source file not found for declaration");
+//     return yield* api.getSymbol.gen(declaration);
+// };
+// @sync-only-end
 /** An independently retained source file and its disposable remote-lifetime lease. */
 export class RetainedSourceFile {
     sourceFile;
     lease;
-    client;
     onDispose;
     disposed = false;
     disposePromise;
-    constructor(sourceFile, lease, client, onDispose) {
+    constructor(sourceFile, lease, onDispose) {
         this.sourceFile = sourceFile;
         this.lease = lease;
-        this.client = client;
         this.onDispose = onDispose;
     }
     [globalThis.Symbol.asyncDispose]() {
@@ -464,9 +541,12 @@ export class RetainedSourceFile {
     async disposeWorker() {
         if (this.disposed)
             return;
+        const api = getNodeAPI(this.sourceFile);
+        if (!api)
+            throw new Error("Retained source file has no owning API");
         this.disposed = true;
         try {
-            await this.client.apiRequest("releaseSourceFile", { lease: this.lease });
+            await api.client.apiRequest("releaseSourceFile", { lease: this.lease });
         }
         finally {
             this.onDispose();
@@ -501,7 +581,7 @@ export class Snapshot {
     operation;
     projectMap;
     toPath;
-    client;
+    api;
     disposed = false;
     disposePromise;
     onDispose;
@@ -509,9 +589,12 @@ export class Snapshot {
     projectDataMap;
     updateSnapshot;
     internal;
-    constructor(data, client, sourceFileCache, toPath, formatDiagnosticsHost, onDispose, updateSnapshot, baseSnapshot) {
+    get client() {
+        return this.api.client;
+    }
+    constructor(data, toPath, api, onDispose, updateSnapshot, baseSnapshot) {
         this.id = data.snapshot;
-        this.client = client;
+        this.api = api;
         this.toPath = toPath;
         this.onDispose = onDispose;
         this.updateSnapshot = updateSnapshot;
@@ -526,14 +609,14 @@ export class Snapshot {
         this.projectDataMap = new Map([...projectDataMap].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
         this.snapshotRegistry = new SnapshotObjectRegistry(this.id);
         for (const projData of this.projectDataMap.values()) {
-            const project = new Project(projData, this.id, client, sourceFileCache, toPath, formatDiagnosticsHost, this.snapshotRegistry);
+            const project = new Project(projData, this.id, toPath, api, this.snapshotRegistry);
             this.projectMap.set(projData.id, project);
         }
         this.operation = {
             createdPrograms: data.operation.createdPrograms?.map(projectId => this.requireProject(projectId).program),
             openedFiles: data.operation.openedFiles?.map(result => ({ project: this.requireProject(result.project) })),
         };
-        this.internal = new SnapshotInternalAPI(this.id, client);
+        this.internal = new SnapshotInternalAPI(this.id, api.client);
     }
     getProjects() {
         this.ensureNotDisposed();
@@ -683,20 +766,22 @@ class SnapshotObjectRegistry {
     }
 }
 class ProjectObjectRegistry {
-    client;
     snapshotId;
     project;
     snapshotRegistry;
-    sourceFileCache;
     types = new Map();
     signatures = new Map();
     disposed = false;
-    constructor(client, snapshotId, project, snapshotRegistry, sourceFileCache) {
-        this.client = client;
+    get client() {
+        return this.project.api.client;
+    }
+    get sourceFileCache() {
+        return this.project.api.sourceFileCache;
+    }
+    constructor(snapshotId, project, snapshotRegistry) {
         this.snapshotId = snapshotId;
         this.project = project;
         this.snapshotRegistry = snapshotRegistry;
-        this.sourceFileCache = sourceFileCache;
         snapshotRegistry.addProjectRegistry(this);
     }
     getOrCreateSymbol(data) {
@@ -709,7 +794,7 @@ class ProjectObjectRegistry {
         const record = this.sourceFileCache.getOrCreateRecord(reference.file, this.snapshotId, this.project.id);
         return this.sourceFileCache.getOrCreateSymbol(record, reference.file, reference.id, () => new Symbol(data, {
             kind: SymbolOwnerKind.File,
-            owner: { record, cache: this.sourceFileCache, client: this.client },
+            owner: { record, api: this.project.api },
         }));
     }
     /** Find an already-interned symbol and retain its file record for this registry. */
@@ -719,7 +804,7 @@ class ProjectObjectRegistry {
             return this.snapshotRegistry.getSymbol(reference.id);
         }
         const record = this.sourceFileCache.findRecord(reference.file);
-        const symbol = record?.symbols.get(reference.id);
+        const symbol = record?.symbolsById.get(reference.id);
         if (record && symbol) {
             this.sourceFileCache.retainRecord(record, this.snapshotId, this.project.id);
         }
@@ -935,6 +1020,8 @@ class ProjectObjectRegistry {
     }
 }
 export class Project {
+    /** @internal */
+    api;
     id;
     configFileName;
     currentDirectory;
@@ -947,10 +1034,10 @@ export class Project {
     program;
     checker;
     languageService;
-    client;
     snapshotId;
-    constructor(data, snapshotId, client, sourceFileCache, toPath, formatDiagnosticsHost, snapshotRegistry) {
+    constructor(data, snapshotId, toPath, api, snapshotRegistry) {
         this.id = data.id;
+        this.api = api;
         this.configFileName = data.configFileName;
         this.currentDirectory = data.currentDirectory;
         this.dirty = data.dirty;
@@ -960,12 +1047,11 @@ export class Project {
         this.parsedCommandLine = data.parsedCommandLine;
         this.compilerOptions = this.parsedCommandLine.options;
         this.rootFiles = this.parsedCommandLine.fileNames;
-        this.client = client;
         this.snapshotId = snapshotId;
-        this.program = new Program(snapshotId, this, client, sourceFileCache, toPath, formatDiagnosticsHost);
-        const objectRegistry = new ProjectObjectRegistry(client, snapshotId, this, snapshotRegistry, sourceFileCache);
-        this.checker = new Checker(snapshotId, this, client, objectRegistry);
-        this.languageService = new LanguageService(snapshotId, this, client, objectRegistry);
+        this.program = new Program(snapshotId, this, toPath);
+        const objectRegistry = new ProjectObjectRegistry(snapshotId, this, snapshotRegistry);
+        this.checker = new Checker(snapshotId, this, objectRegistry);
+        this.languageService = new LanguageService(snapshotId, this, objectRegistry);
     }
     /** @deprecated Use `languageService.getImportAdderEdits`. */
     getImportAdderEdits(file, actions) {
@@ -982,12 +1068,13 @@ export class Project {
 export class LanguageService {
     snapshotId;
     project;
-    client;
     objectRegistry;
-    constructor(snapshotId, project, client, objectRegistry) {
+    get client() {
+        return this.project.api.client;
+    }
+    constructor(snapshotId, project, objectRegistry) {
         this.snapshotId = snapshotId;
         this.project = project;
-        this.client = client;
         this.objectRegistry = objectRegistry;
     }
     async getImportAdderEdits(file, actions) {
@@ -1078,28 +1165,28 @@ export class Program {
     snapshotId;
     id;
     project;
-    client;
-    sourceFileCache;
     toPath;
-    formatDiagnosticsHost;
     decoder = new Wtf8Decoder();
     sourceFileMetadataCache = new Map();
     ownedSnapshot;
     disposePromise;
-    constructor(snapshotId, project, client, sourceFileCache, toPath, formatDiagnosticsHost) {
+    get client() {
+        return this.project.api.client;
+    }
+    get sourceFileCache() {
+        return this.project.api.sourceFileCache;
+    }
+    constructor(snapshotId, project, toPath) {
         this.snapshotId = snapshotId;
         this.id = project.id;
         this.project = project;
-        this.client = client;
-        this.sourceFileCache = sourceFileCache;
         this.toPath = toPath;
-        this.formatDiagnosticsHost = formatDiagnosticsHost;
     }
     getCurrentDirectory() {
         return this.project.currentDirectory;
     }
     getCanonicalFileName(fileName) {
-        return this.formatDiagnosticsHost.getCanonicalFileName(fileName);
+        return this.project.api.getCanonicalFileName(fileName);
     }
     getNewLine() {
         return this.project.compilerOptions.newLine === NewLineKind.CRLF ? "\r\n" : "\n";
@@ -1125,7 +1212,7 @@ export class Program {
     }
     async getSourceFile(file) {
         const fileName = resolveFileName(file);
-        const path = this.toPath(fileName);
+        const path = this.toPath(fileName, this.project.currentDirectory);
         // Check if we already have a retained cache entry for this (snapshot, project) pair
         const retained = this.sourceFileCache.getRetained(path, this.snapshotId, this.project.id);
         if (retained) {
@@ -1141,7 +1228,7 @@ export class Program {
             return undefined;
         }
         // Create a new RemoteSourceFile and cache it (set returns existing if hash matches)
-        const decoded = new RemoteSourceFile(binaryData, this.decoder, this.client.getTimingCollector());
+        const decoded = new RemoteSourceFile(binaryData, this.decoder, this.client.getTimingCollector(), this.project.api);
         return this.sourceFileCache.set(decoded, this.snapshotId, this.project.id);
     }
     async getResolvedModule(file, moduleName, mode) {
@@ -1212,7 +1299,7 @@ export class Program {
      * `Program` instance.
      */
     getSourceFileMetadata(file) {
-        return this.getSourceFileMetadataByPath(this.toPath(resolveFileName(file)));
+        return this.getSourceFileMetadataByPath(this.toPath(resolveFileName(file), this.project.currentDirectory));
     }
     /**
      * Returns program-stored metadata for the source file at the given path, or `undefined`
@@ -1278,7 +1365,7 @@ export class Program {
         if (!binaryData) {
             return undefined;
         }
-        return new RemoteSourceFile(binaryData, this.decoder);
+        return new RemoteSourceFile(binaryData, this.decoder, undefined, this.project.api);
     }
     /**
      * Get syntactic (parse) diagnostics for specific files or all files.
@@ -1531,14 +1618,15 @@ function toEmitOutput(response) {
 export class Checker {
     snapshotId;
     project;
-    client;
     objectRegistry;
     wellKnownSymbols;
     wellKnownSignatures;
-    constructor(snapshotId, project, client, objectRegistry) {
+    get client() {
+        return this.project.api.client;
+    }
+    constructor(snapshotId, project, objectRegistry) {
         this.snapshotId = snapshotId;
         this.project = project;
-        this.client = client;
         this.objectRegistry = objectRegistry;
     }
     dispose() {
@@ -2362,10 +2450,10 @@ export class NodeHandle {
         return sourceFile.getOrCreateNodeAtIndex(this.index);
     }
     async fetchOwnerFile(fileOwner) {
-        const data = await fileOwner.client.apiRequestBinary("getCachedSourceFile", { file: fileOwner.record.descriptor });
+        const data = await fileOwner.api.client.apiRequestBinary("getCachedSourceFile", { file: fileOwner.record.descriptor });
         if (!data)
             throw new Error(`Source file '${fileOwner.record.descriptor.fileName}' is not available`);
-        return fileOwner.cache.attachFile(fileOwner.record, new RemoteSourceFile(data, new Wtf8Decoder(), fileOwner.client.getTimingCollector()));
+        return fileOwner.api.sourceFileCache.attachFile(fileOwner.record, new RemoteSourceFile(data, new Wtf8Decoder(), fileOwner.api.client.getTimingCollector(), fileOwner.api));
     }
 }
 export class Symbol {
@@ -2452,10 +2540,10 @@ export class Symbol {
         }
         const fileOwner = this.storage.owner;
         // A file-owned symbol's relationships are always owned by the same file.
-        const cached = reference.file === fileOwner.record.descriptor.nodeId ? fileOwner.record.symbols.get(reference.id) : undefined;
+        const cached = reference.file === fileOwner.record.descriptor.nodeId ? fileOwner.record.symbolsById.get(reference.id) : undefined;
         if (cached)
             return cached;
-        const data = await fileOwner.client.apiRequest(method, { symbol: this.reference });
+        const data = await fileOwner.api.client.apiRequest(method, { symbol: this.reference });
         if (!data)
             throw new Error(`${method} returned null symbol for Symbol ${this.id}`);
         return this.internFileSymbol(fileOwner, data);
@@ -2465,7 +2553,7 @@ export class Symbol {
             return this.storage.registry.fetchSymbols(this, method);
         }
         const fileOwner = this.storage.owner;
-        const data = await fileOwner.client.apiRequest(method, { symbol: this.reference });
+        const data = await fileOwner.api.client.apiRequest(method, { symbol: this.reference });
         return data?.map(symbol => this.internFileSymbol(fileOwner, symbol)) ?? [];
     }
     internFileSymbol(fileOwner, data) {
@@ -2473,7 +2561,7 @@ export class Symbol {
         const reference = data.reference;
         if (reference.kind !== SymbolOwnerKind.File)
             throw new Error(`Symbol ${reference.id} is not file-owned`);
-        return fileOwner.cache.getOrCreateSymbol(fileOwner.record, reference.file, reference.id, () => new Symbol(data, { kind: SymbolOwnerKind.File, owner: fileOwner }));
+        return fileOwner.api.sourceFileCache.getOrCreateSymbol(fileOwner.record, reference.file, reference.id, () => new Symbol(data, { kind: SymbolOwnerKind.File, owner: fileOwner }));
     }
 }
 class TypeObject {
