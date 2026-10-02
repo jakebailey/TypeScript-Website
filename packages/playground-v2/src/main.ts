@@ -1,5 +1,4 @@
-import { API, DiagnosticCategory, type Diagnostic } from "@typescript/typescript/unstable/sync"
-import { instantiateWasm, WasmTransport } from "@typescript/typescript-wasip1-wasm"
+import { DiagnosticCategory, type Diagnostic } from "@typescript/typescript/unstable/sync"
 import "monaco-editor/editor/contrib/links/browser/links.js"
 import LZString from "lz-string"
 import "reflect-metadata"
@@ -295,12 +294,10 @@ let diagnosticCount = 0
 let compilerFailure: string | undefined
 let lspFailure: string | undefined
 let projectFailure: string | undefined
-let compilerTransport: WasmTransport | undefined
 let languageServer: TsgoLspController | undefined
 let stradaBackend: StradaBackend | undefined
 let nativeBackend: NativeBackend | undefined
 let nativeCompileVersion = 0
-const nativeApiFiles = new Map<string, string>()
 let compileActiveProject: (() => Promise<void> | void) | undefined
 let emittedFiles = new Map<string, string>()
 let emitRenderVersion = 0
@@ -871,28 +868,10 @@ async function initializeNativeCompiler() {
 
     setLoadingIndeterminate("Compiling TypeScript...", "")
     const module = await WebAssembly.compile(wasmBytes)
-    setLoadingProgress(78, "Starting compiler API...", "Instantiating WebAssembly")
+    setLoadingProgress(78, "Starting compiler worker...", "Preparing WebAssembly")
     const libFiles = JSON.parse(new TextDecoder().decode(libFilesBytes)) as Record<string, string>
     const configSchema = JSON.parse(new TextDecoder().decode(configSchemaBytes))
     registerConfigSchema(configSchema)
-    const instance = await instantiateWasm(module)
-    const transport = new WasmTransport({ instance, cwd: projectRoot })
-    compilerTransport = transport
-    const api = new API({ transport })
-    const libraries = Object.entries(libFiles)
-    for (const [index, [fileName, content]] of libraries.entries()) {
-      transport.setFile(fileName, content)
-      setLoadingProgress(
-        82 + ((index + 1) / libraries.length) * 8,
-        "Mounting TypeScript libraries...",
-        `${index + 1} of ${libraries.length} files`
-      )
-    }
-    window.ts = Object.assign(api, {
-      API,
-      DiagnosticCategory,
-      version: __TS_VERSION__,
-    })
     nativeBackend = await NativeBackend.create(module, libFiles)
     const backend = nativeBackend
     discoverDependencies = file => backend.discover(file)
@@ -921,7 +900,6 @@ async function initializeStradaCompiler(requestedVersion: string) {
     }
     const compilerSource = await compilerResponse.text()
     const classicTS = new Function(`${compilerSource}\nreturn ts;`)()
-    window.ts = classicTS
     discoverDependencies = stradaDiscovery(classicTS)
     stradaBackend = await StradaBackend.create({
       baseUrl: `https://playgroundcdn.typescriptlang.org/cdn/${version}/typescript/lib/`,
@@ -1837,8 +1815,6 @@ async function refreshTypeAcquisition() {
 function applyAcquiredTypes(result: AcquisitionResult) {
   for (const fileName of acquiredTypeFiles.keys()) {
     if (result.files.has(fileName)) continue
-    compilerTransport?.removeFile(fileName)
-    nativeApiFiles.delete(fileName)
     const model = acquiredTypeModels.get(fileName)
     if (model && inputEditor.getModel() === model) {
       inputEditor.setModel(projectModels.get(entryFileName) ?? [...projectModels.values()][0])
@@ -1853,10 +1829,6 @@ function applyAcquiredTypes(result: AcquisitionResult) {
   for (const [fileName, text] of result.files) {
     if (projectModels.has(fileName)) continue
     acquiredTypeFiles.set(fileName, text)
-    if (nativeApiFiles.get(fileName) !== text) {
-      compilerTransport?.setFile(fileName, text)
-      nativeApiFiles.set(fileName, text)
-    }
     if (lspReady && acquiredTypeModels.get(fileName)?.getValue() === text) continue
     pendingAcquiredTypeModels.add(fileName)
   }
@@ -2120,16 +2092,8 @@ async function compileNativeProject() {
   runButton.disabled = true
 
   try {
-    const transport = compilerTransport
-    if (!transport) throw new Error("The compiler transport is not initialized")
-    const files = compilerFileContents()
-    for (const [fileName, text] of Object.entries(files)) {
-      if (nativeApiFiles.get(fileName) === text) continue
-      transport.setFile(fileName, text)
-      nativeApiFiles.set(fileName, text)
-    }
     const result = await backend.compile({
-      files,
+      files: compilerFileContents(),
       configFileName,
       sourceFiles: [...projectModels]
         .filter(([, model]) => model.getLanguageId() === "javascript" || model.getLanguageId() === "typescript")
@@ -2636,7 +2600,7 @@ function renderStatus() {
   }
   if (!compilerReady) {
     loadingMessage.textContent = "Downloading TypeScript..."
-    setStatus("Loading compiler API...", "loading")
+    setStatus("Loading compiler...", "loading")
     return
   }
   if (!lspReady) {

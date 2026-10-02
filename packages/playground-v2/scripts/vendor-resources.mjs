@@ -11,7 +11,7 @@ const helpIndex = {
     {
       title: "Projects and files",
       legacyIndexes: [6, 7],
-      html: "<p>The playground is a virtual project rooted at <code>/workspace</code>. Use <strong>+ File</strong> to add source or configuration files, select files in the project tree, and use <strong>Delete</strong> to remove the active project file.</p><p>Automatic compilation and native package discovery run in workers so editing remains responsive. The synchronous <code>window.ts</code> API is still available for direct use.</p><p>The project is saved in the page URL and browser storage as you edit.</p>",
+      html: "<p>The playground is a virtual project rooted at <code>/workspace</code>. Use <strong>+ File</strong> to add source or configuration files, select files in the project tree, and use <strong>Delete</strong> to remove the active project file.</p><p>Automatic compilation and native package discovery run in workers so editing remains responsive.</p><p>The project is saved in the page URL and browser storage as you edit.</p>",
     },
     {
       title: "Compiler versions",

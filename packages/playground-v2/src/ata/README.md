@@ -58,9 +58,10 @@ package/file/response/project byte limits.
 
 Compiler startup and initial emit do not wait for acquisition.
 Native emit, diagnostics, type queries, and dependency discovery run in a
-dedicated worker, separate from the language-server worker. The synchronous
-`window.ts` API remains available on the page, but automatic editing work does
-not call it. Native snapshots are updated across edits, pending compile
+dedicated worker, separate from the language-server worker. No native compiler
+instance or `window.ts` API is created on the page. Strada keeps its parser
+internal for dependency discovery. Native snapshots are updated across edits,
+pending compile
 requests are coalesced, and stale responses cannot replace current results.
 Diagnostics may initially report missing package types; the host recompiles
 after applying the current acquisition snapshot. Emit still follows compiler
