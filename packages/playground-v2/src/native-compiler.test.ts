@@ -12,7 +12,34 @@ test("native compiler reuses snapshots across edits, types, and configuration ch
   for (const name of await readdir(`${directory}/vendor/lib`)) {
     if (/^lib(?:\..+)?\.d\.ts$/.test(name)) transport.setFile(`/${name}`, await readFile(`${directory}/vendor/lib/${name}`, "utf8"))
   }
-  const compiler = new NativeCompiler(new API({ transport }), transport)
+  const api = new API({ transport })
+  const createProgram = api.createProgram
+  const readConfigFile = api.readConfigFile
+  const parseConfig = api.parseJsonConfigFileContent
+  let syntheticPrograms = 0
+  let configReads = 0
+  let configParses = 0
+  Object.defineProperties(api, {
+    createProgram: {
+      value: (...args: Parameters<typeof createProgram>) => {
+        syntheticPrograms++
+        return createProgram(...args)
+      },
+    },
+    readConfigFile: {
+      value: (...args: Parameters<typeof readConfigFile>) => {
+        configReads++
+        return readConfigFile(...args)
+      },
+    },
+    parseJsonConfigFileContent: {
+      value: (...args: Parameters<typeof parseConfig>) => {
+        configParses++
+        return parseConfig(...args)
+      },
+    },
+  })
+  const compiler = new NativeCompiler(api, transport)
   const configFileName = "/workspace/tsconfig.json"
   const source = "/workspace/src/index.ts"
   const config = { compilerOptions: { strict: true, target: "es2022", module: "commonjs", declaration: true }, include: ["src/**/*"] }
@@ -51,10 +78,37 @@ test("native compiler reuses snapshots across edits, types, and configuration ch
     input.files[configFileName] = JSON.stringify(config)
     assert.match(compiler.compile(input).outputFiles["/workspace/src/index.js"], /1/)
 
+    const unopened = "/workspace/src/unopened.ts"
+    input.files[unopened] = 'export const unopenedValue: number = "wrong";'
+    const wholeProject = compiler.compile(input)
+    assert(wholeProject.diagnostics.some(diagnostic => diagnostic.code === 2322 && diagnostic.fileName === unopened))
+    delete input.files[unopened]
+    assert.equal(compiler.compile(input).diagnostics.length, 0)
+
+    input.files[configFileName] = JSON.stringify({
+      ...config,
+      compilerOptions: { ...config.compilerOptions, unknownCompilerOption: true },
+    })
+    assert(compiler.compile(input).diagnostics.some(diagnostic => diagnostic.code === 5023))
+    input.files[configFileName] = '{"compilerOptions": { "strict": true ';
+    assert(compiler.compile(input).diagnostics.some(diagnostic => diagnostic.fileName === configFileName))
+    input.files[configFileName] = JSON.stringify(config)
+    assert.equal(compiler.compile(input).diagnostics.length, 0)
+
+    assert.equal(configReads, 0)
+    assert.equal(configParses, 0)
     const orphan = "/workspace/orphan.ts"
     input.sourceFiles = [source, orphan]
-    input.files[orphan] = "const orphanValue = true;\n//    ^?\n"
+    input.files[orphan] = "const orphanValue = true;"
+    assert.equal(compiler.compile(input).typeQueries[orphan], undefined)
+    assert.equal(syntheticPrograms, 0)
+
+    const orphanHelper = "/workspace/orphan-helper.ts"
+    input.files[orphanHelper] = "declare const orphanSource: true;"
+    input.sourceFiles = [source, orphan, orphanHelper]
+    input.files[orphan] = "const orphanValue = orphanSource;\n//    ^?\n"
     assert(compiler.compile(input).typeQueries[orphan].some(query => query.label.includes("true")))
+    assert.equal(syntheticPrograms, 1)
   } finally {
     compiler.close()
   }

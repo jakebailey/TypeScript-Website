@@ -61,8 +61,11 @@ Native emit, diagnostics, type queries, and dependency discovery run in a
 dedicated worker, separate from the language-server worker. No native compiler
 instance or `window.ts` API is created on the page. Strada keeps its parser
 internal for dependency discovery. Native snapshots are updated across edits,
-pending compile
-requests are coalesced, and stale responses cannot replace current results.
+pending compile requests are coalesced, and stale responses cannot replace
+current results.
+Whole-project diagnostics remain independent of Monaco's per-document reports.
+Compilation reuses the snapshot's parsed configuration, and files outside the
+configured project only need an extra program when they contain type queries.
 Diagnostics may initially report missing package types; the host recompiles
 after applying the current acquisition snapshot. Emit still follows compiler
 options, including `noEmitOnError`. The host also refreshes LSP diagnostics

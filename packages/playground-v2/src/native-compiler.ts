@@ -71,9 +71,11 @@ export class NativeCompiler {
     this.files.clear()
     for (const [fileName, text] of Object.entries(input.files)) this.files.set(fileName, text)
 
-    const config = this.api.readConfigFile(input.configFileName)
-    const parsed = this.api.parseJsonConfigFileContent(config.config, { configFileName: input.configFileName })
     const project = next.getConfiguredProject(input.configFileName)
+    const config = project ? undefined : this.api.readConfigFile(input.configFileName)
+    const parsed =
+      project?.parsedCommandLine ??
+      this.api.parseJsonConfigFileContent(config?.config, { configFileName: input.configFileName })
     const configuredProgram = project && next.getProgram(project.id)
     const program = configuredProgram ?? this.api.createProgram(parsed.fileNames, parsed.options, {
       projectReferences: parsed.projectReferences,
@@ -82,7 +84,7 @@ export class NativeCompiler {
     try {
       const emit = program.emitToString()
       const diagnostics = [
-        ...(config.error ? [config.error] : []),
+        ...(config?.error ? [config.error] : []),
         ...parsed.errors,
         ...program.getSyntacticDiagnostics(),
         ...program.getSemanticDiagnostics(),
@@ -93,7 +95,7 @@ export class NativeCompiler {
       this.collectTypeQueries(program, parsed.fileNames, input.files, typeQueries)
       const configuredFiles = new Set(parsed.fileNames)
       const orphanFiles = input.sourceFiles.filter(fileName => !configuredFiles.has(fileName))
-      if (orphanFiles.length) {
+      if (orphanFiles.some(fileName => hasTypeQuery(input.files[fileName]))) {
         const inferred = this.api.createProgram(orphanFiles, { ...parsed.options, allowJs: true })
         try {
           this.collectTypeQueries(inferred, orphanFiles, input.files, typeQueries)
@@ -125,7 +127,7 @@ export class NativeCompiler {
   ) {
     for (const fileName of fileNames) {
       const source = files[fileName]
-      if (source === undefined || !/^\s*\/\/\s*\^\?\s*$/m.test(source)) continue
+      if (!hasTypeQuery(source)) continue
       const sourceFile = program.getSourceFile(fileName)
       if (!sourceFile) continue
       const document = TextDocument.create(fileName, "typescript", 0, source)
@@ -150,6 +152,10 @@ export class NativeCompiler {
       result[fileName] = queries
     }
   }
+}
+
+function hasTypeQuery(source: string | undefined): source is string {
+  return source !== undefined && /^\s*\/\/\s*\^\?\s*$/m.test(source)
 }
 
 function findNodeAtPosition(node: Node, position: number): Node | undefined {
