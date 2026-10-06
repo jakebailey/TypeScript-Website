@@ -316,8 +316,6 @@ let typeAcquisitionTimer = 0
 const acquiredTypeFiles = new Map<string, string>()
 const acquiredTypePackages = new Set<string>()
 const acquiredTypeModels = new Map<string, monaco.editor.ITextModel>()
-const pendingAcquiredTypeModels = new Set<string>()
-let acquiredTypeMount: Promise<void> | undefined
 let examplesPromise: Promise<PlaygroundExamples> | undefined
 let helpPromise: Promise<PlaygroundHelp> | undefined
 let confirmationResolver: ((value: boolean) => void) | undefined
@@ -915,6 +913,9 @@ async function initializeStradaCompiler(requestedVersion: string) {
       files: compilerFileContents,
       models: projectModels,
       onNavigate: navigateToModel,
+      onCreateExternalModel(model) {
+        if (acquiredTypeFiles.has(model.uri.path)) acquiredTypeModels.set(model.uri.path, model)
+      },
       version,
     })
     compileActiveProject = compileStradaProject
@@ -947,11 +948,13 @@ function startLanguageServer(module: WebAssembly.Module, libraries: Record<strin
       },
       onNavigate: navigateToModel,
       shouldHandleDiagnostics: model => projectModels.get(model.uri.path) === model,
+      readPackageFile: fileName => acquiredTypeFiles.get(fileName),
+      onPackageModel: model => acquiredTypeModels.set(model.uri.path, model),
       onStatus(nextStatus, serverInfo) {
         lspStatus = nextStatus
         lspReady = nextStatus === "ready"
         if (lspReady) {
-          void mountPendingAcquiredTypeModels().then(
+          void synchronizeAcquiredTypes().then(
             () => languageServer?.refreshDiagnostics(),
             error => {
               lspFailure = error instanceof Error ? error.message : String(error)
@@ -1799,7 +1802,7 @@ async function refreshTypeAcquisition() {
       result.ambientTypes.some(name => !acquiredTypePackages.has(name))
     )
     if (changed) applyAcquiredTypes(result)
-    await mountPendingAcquiredTypeModels()
+    await synchronizeAcquiredTypes()
     controller.signal.throwIfAborted()
     typeAcquisitionProgress = undefined
     typeAcquisitionFailure = result.errors.length
@@ -1831,7 +1834,6 @@ function applyAcquiredTypes(result: AcquisitionResult) {
     }
     model?.dispose()
     acquiredTypeModels.delete(fileName)
-    pendingAcquiredTypeModels.delete(fileName)
   }
   acquiredTypeFiles.clear()
   acquiredTypePackages.clear()
@@ -1839,38 +1841,14 @@ function applyAcquiredTypes(result: AcquisitionResult) {
   for (const [fileName, text] of result.files) {
     if (projectModels.has(fileName)) continue
     acquiredTypeFiles.set(fileName, text)
-    if (lspReady && acquiredTypeModels.get(fileName)?.getValue() === text) continue
-    pendingAcquiredTypeModels.add(fileName)
+    const model = acquiredTypeModels.get(fileName)
+    if (model && model.getValue() !== text) model.setValue(text)
   }
 }
 
-function mountPendingAcquiredTypeModels() {
+function synchronizeAcquiredTypes() {
   if (!lspReady) return Promise.resolve()
-  acquiredTypeMount ??= (async () => {
-    while (lspReady && pendingAcquiredTypeModels.size) {
-      const start = performance.now()
-      do {
-        const fileName = pendingAcquiredTypeModels.values().next().value
-        if (fileName === undefined) break
-        pendingAcquiredTypeModels.delete(fileName)
-        const text = acquiredTypeFiles.get(fileName)
-        if (text !== undefined) mountAcquiredTypeModel(fileName, text)
-      } while (pendingAcquiredTypeModels.size && performance.now() - start < 8)
-      if (pendingAcquiredTypeModels.size) await new Promise<void>(resolve => window.setTimeout(resolve, 0))
-    }
-  })().finally(() => { acquiredTypeMount = undefined })
-  return acquiredTypeMount
-}
-
-function mountAcquiredTypeModel(fileName: string, text: string) {
-  const uri = monaco.Uri.file(fileName)
-  const existing = monaco.editor.getModel(uri)
-  if (existing) {
-    if (existing.getValue() !== text) existing.setValue(text)
-    acquiredTypeModels.set(fileName, existing)
-    return
-  }
-  acquiredTypeModels.set(fileName, monaco.editor.createModel(text, languageForFile(fileName), uri))
+  return languageServer?.updatePackageFiles(acquiredTypeFiles) ?? Promise.resolve()
 }
 
 function navigateToModel(fileName: string, range?: monaco.IRange) {

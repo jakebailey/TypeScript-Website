@@ -82,6 +82,13 @@ Both totals can increase as transitive dependencies are discovered.
 Unchanged declaration packages reuse their discovered dependencies, and an
 unchanged acquisition snapshot does not trigger another compilation.
 
+The host batches acquired files into the language server's virtual filesystem
+and sends one watched-files notification for the changes. Package declarations
+are not opened as language-server documents: read-only Monaco models are
+created only when navigating to definitions. This avoids rebuilding inferred
+projects hundreds of times for large packages, while preserving completion,
+definition navigation, and removal of stale dependencies.
+
 The browser tests and offline fixtures exercise parser parity, Node imports,
 DefinitelyTyped fallback, version ranges, config policy, cycles, retries,
 partial failures, cancellation, and resource bounds.

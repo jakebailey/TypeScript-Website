@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/ata/**/*.ts", "src/native-compiler.test.ts"],
+  "include": ["src/ata/**/*.ts", "src/native-compiler.test.ts", "src/lsp-filesystem.test.ts"],
   "exclude": []
 }

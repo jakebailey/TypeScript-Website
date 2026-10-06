@@ -4,14 +4,16 @@ import { mkdir, rm } from "node:fs/promises"
 import { resolve } from "node:path"
 
 const packageDirectory = resolve(import.meta.dirname, "..")
-const testFiles = ["ata.test.mjs", "native-compiler.test.mjs"].map(name => resolve(packageDirectory, "dist", name))
+const testFiles = ["ata.test.mjs", "native-compiler.test.mjs", "lsp-filesystem.test.mjs"].map(name =>
+  resolve(packageDirectory, "dist", name)
+)
 await mkdir(resolve(packageDirectory, "dist"), { recursive: true })
 try {
   await build({
     absWorkingDir: packageDirectory,
     bundle: true,
     conditions: ["browser"],
-    entryPoints: ["src/ata/ata.test.ts", "src/native-compiler.test.ts"],
+    entryPoints: ["src/ata/ata.test.ts", "src/native-compiler.test.ts", "src/lsp-filesystem.test.ts"],
     entryNames: "[name]",
     outExtension: { ".js": ".mjs" },
     external: ["jsonc-parser"],

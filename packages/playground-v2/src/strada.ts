@@ -22,6 +22,7 @@ type StradaBackendOptions = {
   files(): Record<string, string>
   models: Map<string, monaco.editor.ITextModel>
   onNavigate(fileName: string, range: monaco.Range): void
+  onCreateExternalModel(model: monaco.editor.ITextModel): void
   version: string
   baseUrl: string
 }
@@ -534,7 +535,9 @@ export class StradaBackend {
     if (existing) return existing
     const text = await this.readFile(normalized)
     if (text === undefined) return undefined
-    return monaco.editor.createModel(text, languageForFile(normalized), monaco.Uri.file(normalized))
+    const model = monaco.editor.createModel(text, languageForFile(normalized), monaco.Uri.file(normalized))
+    this.#options.onCreateExternalModel(model)
+    return model
   }
 
   #request<T = void>(method: string, args: any): Promise<T> {

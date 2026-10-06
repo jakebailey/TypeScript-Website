@@ -1,4 +1,5 @@
-import { Directory, Fd, File, Inode, PreopenDirectory, WASI, wasi, WASIProcExit } from "@bjorn3/browser_wasi_shim"
+import { Fd, Inode, WASI, wasi, WASIProcExit } from "@bjorn3/browser_wasi_shim"
+import { LspFileSystem, LspStdinRecords } from "./lsp-filesystem"
 
 const headerWords = 4
 const readPosition = 0
@@ -19,11 +20,20 @@ type InitMessage = {
 class BlockingStdin extends Fd {
   readonly #state: Int32Array
   readonly #data: Uint8Array
+  readonly #records: LspStdinRecords
 
-  constructor(buffer: SharedArrayBuffer) {
+  constructor(buffer: SharedArrayBuffer, filesystem: LspFileSystem) {
     super()
     this.#state = new Int32Array(buffer, 0, headerWords)
     this.#data = new Uint8Array(buffer, headerWords * Int32Array.BYTES_PER_ELEMENT)
+    this.#records = new LspStdinRecords(update => {
+      filesystem.update(update.files, update.deleted)
+      self.postMessage({ type: "filesystem", id: update.id })
+    })
+  }
+
+  get readable() {
+    return this.#records.readable
   }
 
   override fd_fdstat_get() {
@@ -44,6 +54,8 @@ class BlockingStdin extends Fd {
   }
 
   override fd_read(size: number) {
+    const buffered = this.#records.read(size)
+    if (buffered) return { ret: wasi.ERRNO_SUCCESS, data: buffered }
     let readPos = Atomics.load(this.#state, readPosition)
     let writePos = Atomics.load(this.#state, writePosition)
     if (readPos === writePos && !Atomics.load(this.#state, closed)) {
@@ -52,9 +64,9 @@ class BlockingStdin extends Fd {
       readPos = Atomics.load(this.#state, readPosition)
       writePos = Atomics.load(this.#state, writePosition)
     }
-    if (readPos !== writePos) {
+    while (readPos !== writePos) {
       const available = writePos - readPos
-      const length = Math.min(size, available)
+      const length = Math.min(64 * 1024, available)
       const result = new Uint8Array(length)
       const start = readPos % this.#data.length
       const first = Math.min(length, this.#data.length - start)
@@ -64,7 +76,11 @@ class BlockingStdin extends Fd {
       }
       Atomics.store(this.#state, readPosition, readPos + length)
       self.postMessage({ type: "drain" })
-      return { ret: wasi.ERRNO_SUCCESS, data: result }
+      this.#records.push(result)
+      const output = this.#records.read(size)
+      if (output) return { ret: wasi.ERRNO_SUCCESS, data: output }
+      readPos = Atomics.load(this.#state, readPosition)
+      writePos = Atomics.load(this.#state, writePosition)
     }
     if (Atomics.load(this.#state, closed)) {
       return { ret: wasi.ERRNO_SUCCESS, data: new Uint8Array() }
@@ -146,7 +162,7 @@ function findHeaderEnd(data: Uint8Array) {
   return -1
 }
 
-function installPollOneoff(wasiRuntime: WASI, state: Int32Array) {
+function installPollOneoff(wasiRuntime: WASI, state: Int32Array, stdin: BlockingStdin) {
   wasiRuntime.wasiImport.poll_oneoff = (
     inputPointer: number,
     outputPointer: number,
@@ -180,6 +196,7 @@ function installPollOneoff(wasiRuntime: WASI, state: Int32Array) {
       const ready = subscriptions.filter(subscription => {
         if (subscription.eventtype === wasi.EVENTTYPE_FD_READ) {
           return (
+            stdin.readable ||
             Atomics.load(state, readPosition) !== Atomics.load(state, writePosition) ||
             Atomics.load(state, closed) !== 0
           )
@@ -220,40 +237,6 @@ function installPollOneoff(wasiRuntime: WASI, state: Int32Array) {
   }
 }
 
-type Tree = Map<string, string | Tree>
-
-function createFileSystem(files: Record<string, string>) {
-  const root: Tree = new Map([
-    ["workspace", new Map()],
-    ["tmp", new Map()],
-    ["typescript", new Map([["lib", new Map()]])],
-  ])
-  for (const [filename, contents] of Object.entries(files)) {
-    const parts = filename.replace(/^\/+/, "").split("/")
-    const basename = parts.pop()!
-    let current = root
-    for (const part of parts) {
-      let child = current.get(part)
-      if (!(child instanceof Map)) {
-        child = new Map()
-        current.set(part, child)
-      }
-      current = child
-    }
-    current.set(basename, contents)
-  }
-
-  function build(tree: Tree): Directory {
-    const contents = new Map<string, Inode>()
-    for (const [name, value] of tree) {
-      contents.set(name, typeof value === "string" ? new File(new TextEncoder().encode(value)) : build(value))
-    }
-    return new Directory(contents)
-  }
-
-  return new PreopenDirectory("/", build(root).contents)
-}
-
 async function start(message: InitMessage) {
   self.postMessage({ type: "status", status: "mounting files" })
   const files = { ...message.files }
@@ -262,9 +245,11 @@ async function start(message: InitMessage) {
     files[`/typescript/lib/${filename}`] = contents
   }
 
-  const fds = [new BlockingStdin(message.stdin), new LspStdout(), new Stderr(), createFileSystem(files)]
+  const filesystem = new LspFileSystem(files)
+  const stdin = new BlockingStdin(message.stdin, filesystem)
+  const fds = [stdin, new LspStdout(), new Stderr(), filesystem.preopen]
   const wasiRuntime = new WASI(["tsc", "--lsp", "--stdio"], ["HOME=/workspace", "TMPDIR=/tmp"], fds, { debug: false })
-  installPollOneoff(wasiRuntime, new Int32Array(message.stdin, 0, headerWords))
+  installPollOneoff(wasiRuntime, new Int32Array(message.stdin, 0, headerWords), stdin)
   const instance = await WebAssembly.instantiate(message.module, {
     wasi_snapshot_preview1: wasiRuntime.wasiImport,
   })

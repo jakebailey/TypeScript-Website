@@ -8,6 +8,7 @@ import {
   conf as typescriptConfiguration,
   language as typescriptLanguage,
 } from "monaco-editor/languages/definitions/typescript/typescript.js"
+import { frameFileSystemUpdate } from "./lsp-filesystem"
 
 const headerWords = 4
 const readPosition = 0
@@ -19,7 +20,8 @@ const bufferSize = 4 * 1024 * 1024
 export type TsgoStatus = "mounting files" | "starting tsc.wasm" | "initializing LSP" | "ready"
 
 type WorkerMessage = {
-  type: "lsp" | "drain" | "status" | "stderr" | "error"
+  type: "lsp" | "drain" | "status" | "stderr" | "error" | "filesystem"
+  id?: number
   message?: any
   status?: TsgoStatus
 }
@@ -39,12 +41,15 @@ type StartTsgoLspOptions = {
   onError(message: string): void
   onNavigate(fileName: string, range: monaco.Range): void
   shouldHandleDiagnostics(model: monaco.editor.ITextModel): boolean
+  readPackageFile(fileName: string): string | undefined
+  onPackageModel(model: monaco.editor.ITextModel): void
   onStatus(status: TsgoStatus, serverInfo?: string): void
 }
 
 export type TsgoLspController = {
   updateEffectiveConfig(text: string): void
   refreshDiagnostics(): void
+  updatePackageFiles(files: ReadonlyMap<string, string>): Promise<void>
 }
 
 class RingBufferWorker {
@@ -57,6 +62,11 @@ class RingBufferWorker {
   readonly #listeners = new Map<EventListenerOrEventListenerObject, EventListener>()
   readonly #pendingRequests = new Map<string | number, string>()
   readonly #configFileName: string
+  readonly #packageFiles = new Map<string, string>()
+  readonly #fileUpdates = new Map<number, { resolve(): void; reject(error: Error): void }>()
+  #nextFileUpdateId = 0
+  #lastFileUpdate = Promise.resolve()
+  #failure: Error | undefined
   #configVersion = 1
   #effectiveConfigText: string
   #queueOffset = 0
@@ -76,12 +86,25 @@ class RingBufferWorker {
       } else if (event.data.type === "status" && event.data.status) {
         this.onStatus?.(event.data.status)
       } else if (event.data.type === "error") {
+        this.#failure = new Error(event.data.message ?? "Language-server worker failed")
+        for (const pending of this.#fileUpdates.values()) pending.reject(this.#failure)
+        this.#fileUpdates.clear()
         this.onError?.(event.data.message)
+      } else if (event.data.type === "filesystem" && event.data.id !== undefined) {
+        this.#fileUpdates.get(event.data.id)?.resolve()
+        this.#fileUpdates.delete(event.data.id)
       } else if (event.data.type === "stderr") {
         console.warn("[tsgo]", event.data.message)
       } else if (event.data.type === "lsp") {
         void this.#handleLspMessage(event.data.message)
       }
+    })
+    this.#worker.addEventListener("error", event => {
+      const error = new Error(event.message || "Language-server worker failed")
+      this.#failure = error
+      for (const pending of this.#fileUpdates.values()) pending.reject(error)
+      this.#fileUpdates.clear()
+      this.onError?.(error.message)
     })
   }
 
@@ -107,6 +130,11 @@ class RingBufferWorker {
       this.#pendingRequests.set(lspMessage.id, lspMessage.method)
     }
 
+    this.#queue.push(this.#frameMessage(message))
+    this.#flush()
+  }
+
+  #frameMessage(message: unknown) {
     const body = new TextEncoder().encode(JSON.stringify(message))
     const header = new TextEncoder().encode(`Content-Length: ${body.length}\r\n\r\n`)
     const framed = new Uint8Array(header.length + body.length)
@@ -115,8 +143,7 @@ class RingBufferWorker {
     if (framed.length > this.#data.length) {
       throw new Error(`LSP message exceeds the ${this.#data.length}-byte stdin buffer`)
     }
-    this.#queue.push(framed)
-    this.#flush()
+    return framed
   }
 
   updateEffectiveConfig(text: string) {
@@ -134,6 +161,38 @@ class RingBufferWorker {
       },
     })
     return true
+  }
+
+  updatePackageFiles(files: ReadonlyMap<string, string>) {
+    if (this.#failure) return Promise.reject(this.#failure)
+    const changed: Record<string, string> = {}
+    const deleted: string[] = []
+    const changes: Array<{ uri: string; type: number }> = []
+    for (const [path, text] of files) {
+      if (this.#packageFiles.get(path) === text) continue
+      changed[path] = text
+      changes.push({ uri: monaco.Uri.file(path).toString(), type: this.#packageFiles.has(path) ? 2 : 1 })
+    }
+    for (const path of this.#packageFiles.keys()) {
+      if (files.has(path)) continue
+      deleted.push(path)
+      changes.push({ uri: monaco.Uri.file(path).toString(), type: 3 })
+    }
+    if (!changes.length) return this.#lastFileUpdate
+    const id = ++this.#nextFileUpdateId
+    const record = frameFileSystemUpdate({ id, files: changed, deleted })
+    const notification = this.#frameMessage({
+      jsonrpc: "2.0",
+      method: "workspace/didChangeWatchedFiles",
+      params: { changes },
+    })
+    const completed = new Promise<void>((resolve, reject) => this.#fileUpdates.set(id, { resolve, reject }))
+    this.#lastFileUpdate = completed
+    this.#packageFiles.clear()
+    for (const [path, text] of files) this.#packageFiles.set(path, text)
+    this.#queue.push(record, notification)
+    this.#flush()
+    return completed
   }
 
   addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
@@ -218,10 +277,16 @@ class RingBufferWorker {
     const method = message?.method
     const label = method ?? this.#pendingRequests.get(message?.id)
     if (method === "textDocument/publishDiagnostics") return
-    if (label === "textDocument/definition") {
+    if (label && [
+      "textDocument/definition",
+      "textDocument/declaration",
+      "textDocument/typeDefinition",
+      "textDocument/implementation",
+      "textDocument/references",
+    ].includes(label)) {
       message.result = normalizeLibraryLocations(message?.result)
       await ensureDefinitionModels(message.result)
-      navigateToDefinition(message.result)
+      if (label === "textDocument/definition") navigateToDefinition(message.result)
     }
     if (message?.id !== undefined && !method) {
       this.#pendingRequests.delete(message.id)
@@ -244,6 +309,8 @@ let languageRegistered = false
 let activeEditor: monaco.editor.IStandaloneCodeEditor | undefined
 let navigateToLocation: StartTsgoLspOptions["onNavigate"] | undefined
 let definitionFilesPromise: Promise<Record<string, string>> | undefined
+let readPackageFile: StartTsgoLspOptions["readPackageFile"] | undefined
+let onPackageModel: StartTsgoLspOptions["onPackageModel"] | undefined
 
 export function registerPlaygroundLanguages() {
   if (languageRegistered) return
@@ -283,6 +350,8 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
 
   activeEditor = options.editor
   navigateToLocation = options.onNavigate
+  readPackageFile = options.readPackageFile
+  onPackageModel = options.onPackageModel
   definitionFilesPromise = Promise.resolve(
     Object.fromEntries(
       Object.entries(options.libraries).map(([fileName, text]) => [
@@ -299,7 +368,7 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
     serverInfo = info
   }
   worker.onError = options.onError
-  // Acquired files are synchronized as open models so closing them can remove them.
+  // Package files are mounted in batches; only project files are open LSP documents.
   worker.start(stdin, options.module, options.libraries, {
     ...Object.fromEntries(options.models.map(model => [model.uri.path, model.getValue()])),
     [options.configFileName]: options.effectiveConfigText,
@@ -308,7 +377,7 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
   const transport = createTransportToWorker(worker as unknown as Worker)
   const client = new MonacoLspClient(transport, {
     shouldHandleDiagnostics: options.shouldHandleDiagnostics,
-    shouldSynchronizeModel: model => !isServerOwnedLibraryModel(model),
+    shouldSynchronizeModel: options.shouldHandleDiagnostics,
   })
   return {
     updateEffectiveConfig(text: string) {
@@ -316,6 +385,9 @@ export function startTsgoLsp(options: StartTsgoLspOptions) {
     },
     refreshDiagnostics() {
       client.refreshDiagnostics()
+    },
+    updatePackageFiles(files: ReadonlyMap<string, string>) {
+      return worker.updatePackageFiles(files)
     },
   } satisfies TsgoLspController
 }
@@ -343,10 +415,6 @@ function normalizeLibraryUri(uri: string) {
   return monaco.Uri.file(`/typescript/lib/${parsed.path.slice("/libs/".length)}`).toString()
 }
 
-function isServerOwnedLibraryModel(model: monaco.editor.ITextModel) {
-  return model.uri.scheme === "file" && /^\/typescript\/lib\/lib(?:\..*)?\.d\.ts$/i.test(model.uri.path)
-}
-
 async function ensureDefinitionModels(result: unknown) {
   const locations = Array.isArray(result) ? result : [result]
   const uris = new Set<string>()
@@ -361,9 +429,11 @@ async function ensureDefinitionModels(result: unknown) {
   for (const uri of uris) {
     const monacoUri = monaco.Uri.parse(uri)
     if (monaco.editor.getModel(monacoUri)) continue
-    const contents = definitionFiles[monacoUri.path]
+    const packageContents = readPackageFile?.(monacoUri.path)
+    const contents = packageContents ?? definitionFiles[monacoUri.path]
     if (contents === undefined) continue
-    monaco.editor.createModel(contents, languageForFile(monacoUri.path), monacoUri)
+    const model = monaco.editor.createModel(contents, languageForFile(monacoUri.path), monacoUri)
+    if (packageContents !== undefined) onPackageModel?.(model)
   }
 }
 
