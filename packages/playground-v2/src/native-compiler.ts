@@ -142,11 +142,10 @@ export class NativeCompiler {
         if (!node) continue
         const checker = program.getProject().checker
         const typeText = checker.typeToString(checker.getTypeAtLocation(node), node).replace(/\r?\n\s*/g, " ")
-        const label = `: ${typeText}`
         queries.push({
           lineNumber: position.line + 1,
           column: position.character + 2,
-          label: label.length > 120 ? `${label.slice(0, 119)}…` : label,
+          label: typeText.length > 120 ? `${typeText.slice(0, 119)}…` : typeText,
         })
       }
       result[fileName] = queries

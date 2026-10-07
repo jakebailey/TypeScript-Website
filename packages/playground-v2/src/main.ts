@@ -2198,7 +2198,7 @@ async function collectStradaTypeQueries(backend: StradaBackend, model: monaco.ed
     queries.push({
       lineNumber: queryPosition.lineNumber,
       column: queryPosition.column + 1,
-      label: truncate(`: ${text}`, 120),
+      label: truncate(text, 120),
     })
   }
   typeQueries.set(model.uri.toString(), queries)

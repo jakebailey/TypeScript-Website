@@ -56,13 +56,13 @@ test("native compiler reuses snapshots across edits, types, and configuration ch
     const first = compiler.compile(input)
     assert.equal(first.diagnostics.length, 0)
     assert.match(first.outputFiles["/workspace/src/index.js"], /42/)
-    assert(first.typeQueries[source].some(query => query.label.includes("42")))
+    assert(first.typeQueries[source].some(query => query.label === "42"))
 
     input.files[source] = 'const answer: number = "wrong";\n//    ^?\n'
     const changed = compiler.compile(input)
     assert(changed.diagnostics.some(diagnostic => diagnostic.code === 2322))
     assert.match(changed.outputFiles["/workspace/src/index.js"], /wrong/)
-    assert(changed.typeQueries[source].some(query => query.label === ": number"))
+    assert(changed.typeQueries[source].some(query => query.label === "number"))
 
     input.files[source] = 'import { value } from "pkg";\nconst answer: string = value;'
     assert(compiler.compile(input).diagnostics.some(diagnostic => diagnostic.code === 2307))
