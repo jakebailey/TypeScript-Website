@@ -100,6 +100,7 @@
                 class="output-section-toggle"
                 type="button"
                 aria-label="Collapse Emit"
+                aria-controls="emit-output"
                 title="Collapse Emit"
               >
                 ▾
@@ -111,6 +112,7 @@
               <button id="toggle-output-button" class="pane-toggle" type="button" aria-label="Hide output" title="Hide output" aria-controls="output-panel">⇥</button>
             </div>
           </div>
+          <div id="emit-output" class="emit-output"></div>
           <details id="diagnostics-panel" class="diagnostics-panel">
             <summary>
               <span>Problems</span>
@@ -120,7 +122,6 @@
               <p class="empty-message">No problems found.</p>
             </div>
           </details>
-          <div id="emit-output" class="emit-output"></div>
           <section id="run-output" class="run-output" aria-live="polite">
             <header>
               <div class="output-section-title">
@@ -129,6 +130,7 @@
                   class="output-section-toggle"
                   type="button"
                   aria-label="Collapse Run output"
+                  aria-controls="run-log"
                   title="Collapse Run output"
                 >
                   ▾

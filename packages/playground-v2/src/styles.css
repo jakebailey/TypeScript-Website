@@ -865,9 +865,9 @@ body[data-resizing] {
 }
 
 .diagnostics-panel {
-  order: 1;
   flex: 0 0 auto;
   min-height: 0;
+  border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
@@ -991,7 +991,6 @@ body[data-resizing] {
 }
 
 .output-panel > .panel-heading {
-  order: 0;
   flex: 0 0 auto;
   padding: 0.45rem 0.65rem;
 }
@@ -1116,7 +1115,6 @@ code {
 }
 
 .emit-output {
-  order: 2;
   flex: 1 1 auto;
   min-height: 0;
   padding: 0.75rem;
@@ -1166,7 +1164,6 @@ code {
 }
 
 .run-output {
-  order: 3;
   flex: 0 0 auto;
   max-height: 12rem;
   overflow: auto;
