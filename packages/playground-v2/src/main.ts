@@ -459,6 +459,15 @@ inputEditor.onMouseDown(event => {
 
 const inlayEmitter = new monaco.Emitter<void>()
 const typeQueries = new Map<string, TypeQuery[]>()
+// Monaco subscribes to refresh events only after its first hint request completes.
+let resolveInitialTypeQueries: (() => void) | undefined
+const initialTypeQueriesReady = new Promise<void>(resolve => {
+  resolveInitialTypeQueries = resolve
+})
+function completeInitialTypeQueries() {
+  resolveInitialTypeQueries?.()
+  resolveInitialTypeQueries = undefined
+}
 const compilerOverrideHints = new Map<string, monaco.languages.InlayHint[]>()
 const overrideCodeLensEmitter = new monaco.Emitter<monaco.languages.CodeLensProvider>()
 let overrideCodeLensProvider: monaco.languages.CodeLensProvider | undefined
@@ -755,7 +764,8 @@ function clampPanelWidth(target: "files" | "output", width: number) {
 for (const language of ["javascript", "typescript"]) {
   monaco.languages.registerInlayHintsProvider(language, {
     onDidChangeInlayHints: inlayEmitter.event,
-    provideInlayHints(model) {
+    async provideInlayHints(model) {
+      await initialTypeQueriesReady
       return {
         hints: [
           ...(typeQueries.get(model.uri.toString()) ?? []).map(query => ({
@@ -879,6 +889,7 @@ async function initializeNativeCompiler() {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     compilerFailure = message
+    completeInitialTypeQueries()
     renderStatus()
     console.error(error)
   }
@@ -918,6 +929,7 @@ async function initializeStradaCompiler(requestedVersion: string) {
     inputEditor.focus()
   } catch (error) {
     compilerFailure = error instanceof Error ? error.message : String(error)
+    completeInitialTypeQueries()
     renderStatus()
     console.error(error)
   }
@@ -2090,6 +2102,7 @@ async function compileNativeProject() {
     for (const [fileName, queries] of Object.entries(result.typeQueries)) {
       typeQueries.set(monaco.Uri.file(fileName).toString(), queries)
     }
+    completeInitialTypeQueries()
     inlayEmitter.fire()
     projectFailure = undefined
     compilerFailure = undefined
@@ -2102,6 +2115,7 @@ async function compileNativeProject() {
     runButton.disabled = true
     setDiagnostics([])
     typeQueries.clear()
+    completeInitialTypeQueries()
     inlayEmitter.fire()
     renderEmitError(message)
     projectFailure = message
@@ -2138,6 +2152,7 @@ async function compileStradaProject() {
         .map(model => collectStradaTypeQueries(backend, model))
     )
     if (compileVersion !== stradaCompileVersion) return
+    completeInitialTypeQueries()
     inlayEmitter.fire()
     projectFailure = undefined
     compilerFailure = undefined
@@ -2149,6 +2164,7 @@ async function compileStradaProject() {
     runButton.disabled = true
     setDiagnostics([])
     typeQueries.clear()
+    completeInitialTypeQueries()
     inlayEmitter.fire()
     const message = error instanceof Error ? error.message : String(error)
     renderEmitError(message)
