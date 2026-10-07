@@ -184,20 +184,10 @@ const defaultFiles: ProjectFile[] = [
   {
     path: entryFileName,
     language: "typescript",
-    text: `import { greet } from "./greet"
-
-const message = greet("TypeScript Playground v2")
+    text: `const message: string = "Hello, TypeScript Playground v2!"
 //    ^?
 
 console.log(message)
-`,
-  },
-  {
-    path: `${projectRoot}/src/greet.ts`,
-    language: "typescript",
-    text: `export function greet(name: string) {
-  return \`Hello, \${name}!\`
-}
 `,
   },
 ]
